@@ -2075,7 +2075,7 @@ function ProductDetail({
             <div className="detail-fragrance-card">
               <span>Família olfativa</span>
               <strong>{displayFamily}</strong>
-              <small>{hasNotes ? "Pirâmide olfativa detalhada mais abaixo." : "Informação olfativa brevemente disponível."}</small>
+              {hasNotes && <small>Pirâmide olfativa detalhada mais abaixo.</small>}
             </div>
 
             <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}</option>)}</select></label>
@@ -2086,7 +2086,10 @@ function ProductDetail({
                 <span>{qty}</span>
                 <button onClick={() => setQty((value) => Math.min(9, value + 1))}><Plus size={16} /></button>
               </div>
-              <button className="primary-button" disabled={product.tag === "soldout"} onClick={addSelectedVariant}>{t.add}</button>
+              <button className="add-to-cart-signature" disabled={product.tag === "soldout"} onClick={addSelectedVariant}>
+                <span>{t.add}</span>
+                <ShoppingBag size={20} />
+              </button>
               <button className={`detail-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}><Heart size={20} fill={isFavorite ? "currentColor" : "none"} /></button>
             </div>
           </div>

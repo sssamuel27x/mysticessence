@@ -2496,7 +2496,7 @@ select {
 
 .detail-gallery-frame {
   position: relative;
-  min-height: clamp(560px, 58vw, 770px);
+  min-height: clamp(520px, 52vw, 700px);
   overflow: hidden;
   border: 1px solid rgba(214, 166, 61, 0.32);
   background:
@@ -2529,14 +2529,14 @@ select {
 
 .detail-gallery-frame .visual {
   position: absolute;
-  inset: 0;
+  inset: 28px;
   z-index: 1;
   background: transparent;
 }
 
 .detail-gallery-frame .product-photo-visual img {
-  width: 86%;
-  height: 86%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 34px 58px rgba(0, 0, 0, 0.5));
 }
@@ -2805,10 +2805,71 @@ select {
   width: 34px;
 }
 
-.buy-row .primary-button {
+.buy-row .primary-button,
+.buy-row .add-to-cart-signature {
   position: relative;
   z-index: 1;
   flex: 1;
+}
+
+.add-to-cart-signature {
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 58px;
+  overflow: hidden;
+  border: 1px solid rgba(245, 204, 91, 0.72);
+  background:
+    linear-gradient(110deg, #6e4506 0%, #d19824 34%, #fff0a8 50%, #c88613 66%, #5e3703 100%);
+  color: #050403;
+  font-weight: 950;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  box-shadow:
+    0 0 0 1px rgba(255, 236, 160, 0.08) inset,
+    0 18px 42px rgba(187, 122, 16, 0.22);
+  transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+}
+
+.add-to-cart-signature::before,
+.add-to-cart-signature::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+}
+
+.add-to-cart-signature::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  transform: translateX(-120%) skewX(-18deg);
+  transition: transform 0.55s ease;
+}
+
+.add-to-cart-signature::after {
+  inset: 7px;
+  border: 1px solid rgba(27, 14, 0, 0.18);
+}
+
+.add-to-cart-signature:hover {
+  transform: translateY(-2px);
+  filter: saturate(1.06);
+  box-shadow:
+    0 0 0 1px rgba(255, 236, 160, 0.12) inset,
+    0 22px 52px rgba(187, 122, 16, 0.3);
+}
+
+.add-to-cart-signature:hover::before {
+  transform: translateX(120%) skewX(-18deg);
+}
+
+.add-to-cart-signature:disabled {
+  cursor: not-allowed;
+  filter: grayscale(1) brightness(0.72);
+  opacity: 0.62;
 }
 
 .detail-favorite {
@@ -5293,7 +5354,7 @@ select {
   }
 
   .detail-gallery-frame {
-    min-height: 560px;
+    min-height: 500px;
   }
 
   .trust-panel {
@@ -5677,7 +5738,7 @@ select {
   }
 
   .detail-gallery-frame {
-    min-height: 410px;
+    min-height: 360px;
   }
 
   .detail-gallery-frame::before {
@@ -5685,8 +5746,8 @@ select {
   }
 
   .detail-gallery-frame .product-photo-visual img {
-    width: 92%;
-    height: 88%;
+    width: 100%;
+    height: 100%;
   }
 
   .detail-gallery-caption {
@@ -5718,6 +5779,29 @@ select {
 
   .detail-purchase-card {
     padding: 18px;
+  }
+
+  .buy-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 58px;
+    gap: 12px;
+  }
+
+  .buy-row .qty-control {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .buy-row .qty-control button,
+  .buy-row .qty-control span {
+    width: 33.333%;
+  }
+
+  .add-to-cart-signature {
+    min-width: 0;
+    min-height: 62px;
+    font-size: 18px;
   }
 
   .detail-price-line {
@@ -5774,7 +5858,11 @@ select {
   }
 
   .detail-gallery-frame {
-    min-height: 430px;
+    min-height: 360px;
+  }
+
+  .detail-gallery-frame .visual {
+    inset: 18px;
   }
 }
 
@@ -6603,23 +6691,27 @@ select {
 
   .buy-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) 56px;
+    gap: 12px;
   }
 
   .buy-row .qty-control {
-    justify-self: start;
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    width: 100%;
   }
 
-  .buy-row .primary-button {
-    grid-column: 1 / -1;
+  .buy-row .primary-button,
+  .buy-row .add-to-cart-signature {
+    grid-column: 1;
     grid-row: 2;
     width: 100%;
   }
 
   .buy-row .detail-favorite {
     grid-column: 2;
-    grid-row: 1;
+    grid-row: 2;
+    min-height: 56px;
   }
 
   .admin-inventory-title {
