@@ -1,0 +1,3013 @@
+"use client";
+
+import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { PRODUCT_IMAGE_IDS } from "./product-images";
+import {
+  createCheckout,
+  createPendingOrder,
+  firebaseEnabled,
+  paymentsEnabled,
+  storageEnabled,
+  loginWithEmail,
+  loginWithGoogle,
+  logoutFirebase,
+  registerWithEmail,
+  removeProduct as removeFirebaseProduct,
+  saveFavoriteFolders,
+  saveProduct as saveFirebaseProduct,
+  seedProducts,
+  updateOrder as updateFirebaseOrder,
+  uploadProductImage,
+  watchFavoriteFolders,
+  watchOrders,
+  watchProducts,
+  watchSession,
+} from "./firebase";
+import {
+  Apple,
+  Archive,
+  ArchiveRestore,
+  ArrowLeft,
+  BadgeCheck,
+  Boxes,
+  ClipboardList,
+  Camera,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Citrus,
+  Cookie,
+  CreditCard,
+  LayoutDashboard,
+  Globe2,
+  Heart,
+  Headphones,
+  History,
+  Folder,
+  Flower2,
+  LockKeyhole,
+  LogOut,
+  Mail,
+  MapPin,
+  Menu,
+  MessageCircle,
+  Minus,
+  Music2,
+  PackagePlus,
+  Pencil,
+  Plus,
+  Search,
+  Save,
+  ShieldCheck,
+  ShoppingBag,
+  Smartphone,
+  Sparkles,
+  Tag,
+  Phone,
+  Trash2,
+  Truck,
+  Trees,
+  User,
+  WalletCards,
+  X,
+} from "lucide-react";
+
+type Lang = "pt" | "en";
+type View = "home" | "listing" | "product" | "checkout" | "account" | "admin";
+type ListingKind = "all" | "new" | "best" | "sale" | "decants" | "men" | "women" | "unisex";
+type ScentProfile = "fresh" | "fruity" | "floral" | "sweet" | "woody";
+type PaymentMethod = "mbway" | "apple" | "visa";
+type Session = { uid: string; name: string; email: string; role: "customer" | "admin" };
+type OrderStatus = "received" | "preparing" | "shipped" | "delivered";
+type ProductAudience = "men" | "women" | "unisex";
+
+type ProductVariant = {
+  volume: string;
+  price: number;
+  isDecant?: boolean;
+};
+
+type Product = {
+  id: string;
+  brand: string;
+  category: "Masculinos" | "Femininos" | "Unissexo";
+  scentProfile: ScentProfile;
+  audiences: ProductAudience[];
+  tag: "new" | "stock" | "soldout";
+  bestSeller?: boolean;
+  name: Record<Lang, string>;
+  family: Record<Lang, string>;
+  desc: Record<Lang, string>;
+  notes: {
+    top: Record<Lang, string[]>;
+    heart: Record<Lang, string[]>;
+    base: Record<Lang, string[]>;
+  };
+  price: number;
+  discount?: number;
+  promotionEndsAt?: string;
+  isDecant?: boolean;
+  volume: string;
+  variants: ProductVariant[];
+  color: string;
+  accent: string;
+  mood: string;
+  imageUrl?: string;
+  imagePath?: string;
+};
+
+type ListingFilters = {
+  availability: "all" | "stock" | "soldout";
+  priceRange: "all" | "under30" | "30to50" | "over50";
+  brands: string[];
+  profiles: ScentProfile[];
+};
+
+const EMPTY_LISTING_FILTERS: ListingFilters = {
+  availability: "all",
+  priceRange: "all",
+  brands: [],
+  profiles: [],
+};
+
+type AppRoute = {
+  view: View;
+  listing: ListingKind;
+  profileFilter: ScentProfile | null;
+  activeId?: string;
+};
+
+const LISTING_PATHS: Record<ListingKind, string> = {
+  all: "/perfumes",
+  men: "/perfumes/masculinos",
+  women: "/perfumes/femininos",
+  unisex: "/perfumes/unissexo",
+  new: "/novidades",
+  best: "/best-sellers",
+  sale: "/promocoes",
+  decants: "/decants",
+};
+
+function routeFromPath(pathname: string): AppRoute {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  const listingEntry = (Object.entries(LISTING_PATHS) as [ListingKind, string][]).find(([, routePath]) => routePath === path);
+  if (listingEntry) return { view: "listing", listing: listingEntry[0], profileFilter: null };
+  if (path.startsWith("/perfil-olfativo/")) {
+    const profile = path.slice("/perfil-olfativo/".length) as ScentProfile;
+    if (SCENT_PROFILES.includes(profile)) return { view: "listing", listing: "all", profileFilter: profile };
+  }
+  if (path.startsWith("/produto/")) {
+    return { view: "product", listing: "all", profileFilter: null, activeId: decodeURIComponent(path.slice("/produto/".length)) };
+  }
+  if (path === "/checkout") return { view: "checkout", listing: "all", profileFilter: null };
+  if (path === "/conta") return { view: "account", listing: "all", profileFilter: null };
+  if (path === "/admin") return { view: "admin", listing: "all", profileFilter: null };
+  return { view: "home", listing: "all", profileFilter: null };
+}
+
+const SCENT_PROFILE_LABELS: Record<Lang, Record<ScentProfile, string>> = {
+  pt: {
+    fresh: "Frescos e cítricos",
+    fruity: "Frutados",
+    floral: "Florais",
+    sweet: "Doces e Gourmand",
+    woody: "Amadeirados e especiados",
+  },
+  en: {
+    fresh: "Fresh and citrus",
+    fruity: "Fruity",
+    floral: "Floral",
+    sweet: "Sweet and Gourmand",
+    woody: "Woody and spicy",
+  },
+};
+
+const SCENT_PROFILES = Object.keys(SCENT_PROFILE_LABELS.pt) as ScentProfile[];
+
+function inferScentProfile(seed: CatalogSeed): ScentProfile {
+  const name = seed.name.toLowerCase();
+  const matches = (terms: string[]) => terms.some((term) => name.includes(term));
+
+  if (matches(["aqua", "aquatica", "pacific", "ocean", "blue", "snow", "ice", "freeze", "beach", "aloha", "tropical", "electric", "rainfall", "island dreams"])) return "fresh";
+  if (matches(["coral", "sublime", "baie", "fruit", "yum yum", "tous", "passion", "gold edition", "opulent dubai"])) return "fruity";
+  if (matches(["rose", "flor", "woman", "for women", "her", "queen", "dalal", "haya", "layaan", "marwa", "aira", "reyna", "victoria", "atheeri", "bint hoor", "sabah"])) return "floral";
+  if (matches(["yara", "vanilla", "vanille", "eclaire", "tiramisu", "brioche", "sugar", "nebras", "angham", "qahwa", "khamrah", "sweet", "gourmand"])) return "sweet";
+  if (matches(["oud", "asad", "wood", "amber", "musamam", "wraith", "black", "intense", "king", "kingdom", "firestorm", "dynasty", "dukhan", "tobacco"])) return "woody";
+
+  if (seed.category === "Femininos") return "floral";
+  if (seed.category === "Masculinos") return "woody";
+  return "sweet";
+}
+
+type CartItem = Product & { qty: number };
+type OrderItem = {
+  id: string;
+  name: Record<Lang, string>;
+  brand: string;
+  volume: string;
+  price: number;
+  qty: number;
+  imageUrl?: string;
+};
+type FavoriteFolder = { id: string; name: string; productIds: string[] };
+type Order = {
+  id: string;
+  createdAt: string;
+  customer: {
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+    postal: string;
+    city: string;
+    notes: string;
+  };
+  items: OrderItem[];
+  subtotal: number;
+  shipping: number;
+  total: number;
+  customerUid?: string | null;
+  payment: PaymentMethod | "ifthenpay";
+  paymentMethod?: string;
+  paymentStatus?: "pending" | "paid" | "failed";
+  status: OrderStatus;
+  archived: boolean;
+  trackingNumber?: string;
+};
+
+const ORDER_STATUS_SEQUENCE: OrderStatus[] = ["received", "preparing", "shipped", "delivered"];
+const ORDER_STATUS_LABELS: Record<Lang, Record<OrderStatus, string>> = {
+  pt: {
+    received: "Encomenda recebida",
+    preparing: "Em preparação",
+    shipped: "Enviada",
+    delivered: "Entregue",
+  },
+  en: {
+    received: "Order received",
+    preparing: "Preparing",
+    shipped: "Shipped",
+    delivered: "Delivered",
+  },
+};
+
+const COPY = {
+  pt: {
+    nav: { perfumes: "Perfumes", brands: "Marcas", newIn: "Novidades", best: "Best sellers", sale: "Promoções", decants: "Decants" },
+    search: "Pesquisar fragrâncias, marcas ou notas",
+    account: "Conta",
+    heroEyebrow: "Perfumaria Árabe em Santa Maria da Feira",
+    heroTitle: "Mystic Essence",
+    heroSub:
+      "Descubra essências de luxo inesquecíveis que marcam presença com elegância e exclusividade.",
+    heroCta: "Explorar perfumes",
+    heroSecond: "Ver novidades",
+    featured: "Escolhas da casa",
+    featuredSub: "Best sellers com rasto marcante, boa projeção e preços fáceis de entrar no mundo árabe.",
+    newTitle: "Novidades",
+    bestTitle: "Best sellers",
+    saleTitle: "Promoções",
+    allTitle: "Perfumes",
+    decantsTitle: "Decants 2, 5 e 10 ml",
+    products: "produtos",
+    sort: "Ordenar por",
+    sortValue: "Data, mais recentes",
+    filters: ["Disponibilidade", "Preço", "Marca", "Família olfativa"],
+    results: "Ver resultados",
+    add: "Adicionar ao carrinho",
+    details: "Ver detalhes",
+    from: "A partir de",
+    stock: "Em stock",
+    soldout: "Esgotado",
+    pick: "Escolha uma opção",
+    qty: "Quantidade",
+    signature: "Assinatura olfativa",
+    journey: "A viagem desta fragrância",
+    journeySub: "Da primeira impressão ao rasto que permanece na pele.",
+    top: "Notas de saída",
+    heart: "Notas de coração",
+    base: "Notas de fundo",
+    related: "Perfumes semelhantes",
+    cart: "Carrinho",
+    empty: "O carrinho está vazio.",
+    emptySub: "Adicione uma fragrância para ver o resumo aqui.",
+    subtotal: "Subtotal",
+    checkout: "Finalizar compra",
+    mockOnly: "Pagamento processado em segurança pela Ifthenpay.",
+    checkoutPage: {
+      eyebrow: "Checkout seguro",
+      title: "Finalizar compra",
+      back: "Voltar às compras",
+      contactTitle: "Dados de contacto",
+      deliveryTitle: "Morada de entrega",
+      paymentTitle: "Método de pagamento",
+      name: "Nome completo",
+      email: "Email",
+      phone: "Número de telefone",
+      address: "Morada",
+      postal: "Código postal",
+      city: "Localidade",
+      notes: "Notas da encomenda (opcional)",
+      cardName: "Nome no cartão",
+      cardNumber: "Número do cartão",
+      expiry: "MM/AA",
+      cvc: "CVC",
+      order: "Resumo da encomenda",
+      shipping: "Envio",
+      free: "Grátis",
+      total: "Total",
+      confirm: "Confirmar pedido",
+      secure: "Os seus dados permanecem neste mockup e não são enviados.",
+      successTitle: "Pedido confirmado",
+      successText: "A demonstração do checkout foi concluída. Nenhum pagamento real foi processado.",
+      continue: "Continuar a comprar",
+    },
+    remove: "Remover",
+    menuShop: "Comprar",
+    menuDiscover: "Descobrir",
+    menuPromo: "A maior seleção de perfumes árabes em Santa Maria da Feira.",
+    menuPromoSub: "Fragrâncias autênticas, atendimento próximo e seleção para todos os estilos.",
+    footerTag: "Perfumaria árabe autêntica em Santa Maria da Feira, Aveiro.",
+    contact: "Contactos",
+    address: "R. São Nicolau 8 Lj 20, 4520-248 Santa Maria da Feira",
+    phone: "932 761 915",
+    hours: "Seg-Sex 10:30-13:00, 14:30-19:00",
+    legal: "Termos e políticas",
+    rights: "Todos os direitos reservados.",
+  },
+  en: {
+    nav: { perfumes: "Perfumes", brands: "Brands", newIn: "New in", best: "Best sellers", sale: "Offers", decants: "Decants" },
+    search: "Search fragrances, brands or notes",
+    account: "Account",
+    heroEyebrow: "Arabian perfumery in Santa Maria da Feira",
+    heroTitle: "Mystic Essence",
+    heroSub:
+      "Intense, elegant and memorable Arabian fragrances selected for effortless presence.",
+    heroCta: "Explore perfumes",
+    heroSecond: "See new in",
+    featured: "House picks",
+    featuredSub: "Best sellers with memorable trails, strong projection and approachable entry prices.",
+    newTitle: "New in",
+    bestTitle: "Best sellers",
+    saleTitle: "Offers",
+    allTitle: "Perfumes",
+    decantsTitle: "2, 5 and 10 ml decants",
+    products: "products",
+    sort: "Sort by",
+    sortValue: "Date, newest",
+    filters: ["Availability", "Price", "Brand", "Olfactory family"],
+    results: "See results",
+    add: "Add to cart",
+    details: "View details",
+    from: "From",
+    stock: "In stock",
+    soldout: "Sold out",
+    pick: "Choose an option",
+    qty: "Quantity",
+    signature: "Olfactory signature",
+    journey: "The journey of this fragrance",
+    journeySub: "From the first impression to the trail that remains.",
+    top: "Top notes",
+    heart: "Heart notes",
+    base: "Base notes",
+    related: "Similar perfumes",
+    cart: "Cart",
+    empty: "Your cart is empty.",
+    emptySub: "Add a fragrance to see the summary here.",
+    subtotal: "Subtotal",
+    checkout: "Checkout",
+    mockOnly: "Payment securely processed by Ifthenpay.",
+    checkoutPage: {
+      eyebrow: "Secure checkout",
+      title: "Complete your order",
+      back: "Back to shopping",
+      contactTitle: "Contact details",
+      deliveryTitle: "Delivery address",
+      paymentTitle: "Payment method",
+      name: "Full name",
+      email: "Email",
+      phone: "Phone number",
+      address: "Address",
+      postal: "Postcode",
+      city: "City",
+      notes: "Order notes (optional)",
+      cardName: "Name on card",
+      cardNumber: "Card number",
+      expiry: "MM/YY",
+      cvc: "CVC",
+      order: "Order summary",
+      shipping: "Shipping",
+      free: "Free",
+      total: "Total",
+      confirm: "Confirm order",
+      secure: "Your details remain in this mockup and are not sent anywhere.",
+      successTitle: "Order confirmed",
+      successText: "The checkout demonstration is complete. No real payment was processed.",
+      continue: "Continue shopping",
+    },
+    remove: "Remove",
+    menuShop: "Shop",
+    menuDiscover: "Discover",
+    menuPromo: "The largest selection of Arabian perfumes in Santa Maria da Feira.",
+    menuPromoSub: "Authentic fragrances, personal service and a selection for every style.",
+    footerTag: "Authentic Arabian perfumery in Santa Maria da Feira, Aveiro.",
+    contact: "Contacts",
+    address: "R. São Nicolau 8 Lj 20, 4520-248 Santa Maria da Feira",
+    phone: "932 761 915",
+    hours: "Mon-Fri 10:30-13:00, 14:30-19:00",
+    legal: "Terms and policies",
+    rights: "All rights reserved.",
+  },
+};
+
+const BRANDS = [
+  "Afnan",
+  "Al Haramain",
+  "Al Wataniah",
+  "Arabiyat Prestige",
+  "Ard Al Zaafaran",
+  "Armaf",
+  "Aromatix x French Avenue",
+  "Asdaaf",
+  "Bujairami",
+  "Fragrance World",
+  "French Avenue",
+  "Khadlaj",
+  "Lattafa",
+  "Maison Alhambra",
+  "Maison Asrar",
+  "Mamlakat Al Oud",
+  "Nusuk",
+  "Paris Corner",
+  "Rasasi",
+  "Rave",
+  "Rayhaan",
+  "Riiffs",
+  "Swiss Arabian",
+  "Volaré",
+  "Zimaya",
+];
+
+type CatalogSeed = {
+  id: string;
+  name: string;
+  brand: string;
+  volume: string;
+  price: number;
+  category: Product["category"];
+  audiences?: ProductAudience[];
+  soldout?: boolean;
+  bestSeller?: boolean;
+};
+
+const PRODUCT_PALETTES = [
+  ["#66553f", "#d7b35b", "amber"],
+  ["#4f5968", "#c8d0db", "silver"],
+  ["#8a6036", "#e4b964", "gold"],
+  ["#5d3440", "#d59a9f", "rose"],
+  ["#315967", "#9ec9d5", "aqua"],
+  ["#3d4d3d", "#b9c59f", "green"],
+] as const;
+
+const BUDGET_DECANTS = new Set([
+  "ameerat-sugar-crown", "sensuous-night", "yara", "fakhar-platinum", "sabah-al-ward",
+  "fakhar-rose", "brioche-vanille", "yara-tous", "milani-warm-vanilla", "fakhar-gold",
+  "asad", "ameerat-al-arab", "ana-abiyedh-white", "bint-hooran", "ana-abiyedh-coral",
+  "asad-elixir", "passion", "raghba-wood-intense", "hayaati", "yara-elixir",
+  "qaed-al-fursan", "opulent-dubai", "amazon-rainfall", "yara-moi", "kingsman",
+  "your-touch-for-women", "barakkat-rouge-540", "durrat-al-aroos",
+]);
+
+const PREMIUM_DECANTS = new Set([
+  "atlantis-extrait", "queen-of-arabia", "afeef", "liquid-brun-limited", "safari-breeze",
+  "regent", "rayhaan-aquatica", "pisa", "marwa", "irida-extrait", "hawas-kobra",
+  "amber-oud-gold", "king-of-arabia", "musamam-black", "supremacy-collectors", "hectic-bujairami",
+]);
+
+function decantVariants(productId: string, fullSizePrice: number): ProductVariant[] {
+  const twoMl = { volume: "2ml", price: fullSizePrice <= 45 ? 1.9 : 2.5, isDecant: true };
+  if (BUDGET_DECANTS.has(productId)) {
+    return [
+      twoMl,
+      { volume: "5ml", price: 3.8, isDecant: true },
+      { volume: "10ml", price: 6.9, isDecant: true },
+    ];
+  }
+  if (PREMIUM_DECANTS.has(productId)) {
+    const fiveMlPrice = ["regent", "rayhaan-aquatica", "pisa", "marwa", "supremacy-collectors", "hectic-bujairami"].includes(productId) ? 5.5 : 5.8;
+    return [
+      twoMl,
+      { volume: "5ml", price: fiveMlPrice, isDecant: true },
+      { volume: "10ml", price: 8.9, isDecant: true },
+    ];
+  }
+  return [
+    twoMl,
+    { volume: "5ml", price: 4.5, isDecant: true },
+    { volume: "10ml", price: 7.99, isDecant: true },
+  ];
+}
+
+function fullSizeVariants(seed: CatalogSeed): ProductVariant[] {
+  if (seed.id === "yara") {
+    return [
+      { volume: "100ml", price: 28 },
+      { volume: "50ml", price: 12.9 },
+    ];
+  }
+  if (seed.id === "amber-oud-gold") {
+    return [
+      { volume: "60ml", price: seed.price },
+      { volume: "100ml", price: seed.price },
+    ];
+  }
+  return [{ volume: seed.volume, price: seed.price }];
+}
+
+const CATALOG: CatalogSeed[] = [
+  { id: "manaal", name: "Manaal", brand: "Ard Al Zaafaran", volume: "100ml", price: 44.9, category: "Femininos" },
+  { id: "atlantis-extrait", name: "Atlantis Extrait", brand: "French Avenue", volume: "100ml", price: 54.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "dalal", name: "Dalal", brand: "Lattafa", volume: "100ml", price: 44.99, category: "Femininos" },
+  { id: "spectra-surge", name: "Spectra & Surge", brand: "Riiffs", volume: "100ml", price: 47.9, category: "Masculinos" },
+  { id: "beach-party", name: "Beach Party", brand: "Armaf", volume: "100ml", price: 42.99, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "queen-of-arabia", name: "Queen of Arabia + 4 decants", brand: "Lattafa", volume: "100ml", price: 55.99, category: "Femininos" },
+  { id: "yum-yum", name: "Yum Yum", brand: "Armaf", volume: "100ml", price: 48.9, category: "Femininos" },
+  { id: "ameerat-sugar-crown", name: "Ameerat Al Arab Sugar Crown", brand: "Asdaaf", volume: "100ml", price: 32.5, category: "Femininos" },
+  { id: "sensuous-night", name: "Sensuous Night", brand: "Khadlaj", volume: "100ml", price: 29.9, category: "Femininos" },
+  { id: "yara", name: "Yara", brand: "Lattafa", volume: "100ml", price: 28, category: "Femininos", bestSeller: true },
+  { id: "petra", name: "Petra", brand: "Lattafa", volume: "100ml", price: 44.99, category: "Femininos" },
+  { id: "fakhar-platinum", name: "Fakhar Platinum", brand: "Lattafa", volume: "100ml", price: 32.9, category: "Masculinos" },
+  { id: "her-confession", name: "Her Confession", brand: "Lattafa", volume: "100ml", price: 45.9, category: "Femininos" },
+  { id: "azm", name: "AZM", brand: "Paris Corner", volume: "100ml", price: 38.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "haya", name: "Haya", brand: "Lattafa", volume: "100ml", price: 38.9, category: "Femininos" },
+  { id: "shaghaf", name: "Shaghaf", brand: "Al Wataniah", volume: "100ml", price: 37.9, category: "Femininos" },
+  { id: "sakeena", name: "Sakeena", brand: "Lattafa", volume: "100ml", price: 39.8, category: "Femininos" },
+  { id: "afeef", name: "Afeef", brand: "Lattafa", volume: "100ml", price: 52.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "hoor-riiffs", name: "Hoor", brand: "Riiffs", volume: "100ml", price: 48.99, category: "Femininos" },
+  { id: "liquid-brun-limited", name: "Liquid Brun Limited Edition", brand: "French Avenue", volume: "150ml", price: 59.8, category: "Masculinos" },
+  { id: "queen-checkmate", name: "Queen Checkmate", brand: "Armaf", volume: "100ml", price: 44.9, category: "Femininos" },
+  { id: "safari-breeze", name: "Safari Breeze", brand: "French Avenue", volume: "100ml", price: 54.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "liquid-brun", name: "Liquid Brun", brand: "French Avenue", volume: "100ml", price: 44.99, category: "Masculinos", bestSeller: true },
+  { id: "shaghaf-woman", name: "Shaghaf Woman", brand: "Swiss Arabian", volume: "75ml", price: 37.9, category: "Femininos" },
+  { id: "regent", name: "Regent", brand: "Maison Asrar", volume: "100ml", price: 64.99, category: "Masculinos" },
+  { id: "rayhaan-pacific", name: "Pacific", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "sabah-al-ward", name: "Sabah Al Ward", brand: "Al Wataniah", volume: "100ml", price: 28.5, category: "Femininos" },
+  { id: "badee-al-oud-sublime", name: "Bade'e Al Oud Sublime", brand: "Lattafa", volume: "100ml", price: 38.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "rayhaan-aquatica", name: "Aquatica", brand: "Rayhaan", volume: "100ml", price: 52.9, category: "Masculinos" },
+  { id: "momento-riiffs", name: "Momento", brand: "Riiffs", volume: "100ml", price: 39.99, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "layaan", name: "Layaan", brand: "Lattafa", volume: "100ml", price: 39.8, category: "Femininos" },
+  { id: "island-vanilla-dunes", name: "Island Vanilla Dunes", brand: "Khadlaj", volume: "100ml", price: 45.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "habik-women", name: "Habik for Women", brand: "Lattafa", volume: "100ml", price: 38.5, category: "Femininos" },
+  { id: "yara-50", name: "Yara", brand: "Lattafa", volume: "50ml", price: 12.9, category: "Femininos" },
+  { id: "shiyaaka-snow", name: "Shiyaaka Snow", brand: "Khadlaj", volume: "100ml", price: 42.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "fakhar-rose", name: "Fakhar Rose", brand: "Lattafa", volume: "100ml", price: 32.9, category: "Femininos" },
+  { id: "rayhaan-azul", name: "Azul", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "brioche-vanille", name: "Brioche Vanille", brand: "Lattafa", volume: "100ml", price: 32.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "pisa", name: "Pisa", brand: "Lattafa", volume: "100ml", price: 58.99, category: "Masculinos" },
+  { id: "vulcan-feu", name: "Vulcan Feu", brand: "French Avenue", volume: "100ml", price: 48.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "sehr", name: "Sehr", brand: "Lattafa", volume: "100ml", price: 52.5, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "rayhaan-kiss", name: "Kiss", brand: "Rayhaan", volume: "100ml", price: 44.99, category: "Femininos" },
+  { id: "nebras-elixir", name: "Nebras Elixir", brand: "Lattafa", volume: "100ml", price: 44.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "marwa", name: "Marwa", brand: "Arabiyat Prestige", volume: "100ml", price: 52.5, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "rayhaan-aloha", name: "Pacific Aloha", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "turathi-electric", name: "Turathi Electric", brand: "Afnan", volume: "100ml", price: 44.5, category: "Masculinos" },
+  { id: "irida-extrait", name: "Irida Extrait", brand: "French Avenue", volume: "100ml", price: 53.9, category: "Femininos" },
+  { id: "island-dreams", name: "Island Dreams", brand: "Khadlaj", volume: "100ml", price: 44.5, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "9pm-rebel", name: "9PM Rebel", brand: "Afnan", volume: "100ml", price: 44.9, category: "Masculinos", bestSeller: true },
+  { id: "yara-tous", name: "Yara Tous", brand: "Lattafa", volume: "100ml", price: 28, category: "Femininos" },
+  { id: "milani-warm-vanilla", name: "Milani Warm Vanilla", brand: "Volaré", volume: "100ml", price: 32.99, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "art-of-arabia-i", name: "Art of Arabia I", brand: "Lattafa", volume: "100ml", price: 46, category: "Masculinos" },
+  { id: "vanilla-voyage", name: "Vanilla Voyage", brand: "Maison Asrar", volume: "100ml", price: 45.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "khamrah-dukhan", name: "Khamrah Dukhan", brand: "Lattafa", volume: "100ml", price: 43.99, category: "Masculinos", bestSeller: true },
+  { id: "club-de-nuit-intense-man", name: "Club de Nuit Intense Man", brand: "Armaf", volume: "105ml", price: 44.99, category: "Masculinos", bestSeller: true },
+  { id: "ravine-ice", name: "Ravine Ice", brand: "Riiffs", volume: "100ml", price: 49.99, category: "Masculinos" },
+  { id: "odyssey-mega", name: "Odyssey Mega", brand: "Armaf", volume: "100ml", price: 37.9, category: "Masculinos" },
+  { id: "eclaire", name: "Eclaire", brand: "Lattafa", volume: "100ml", price: 40, category: "Femininos", bestSeller: true },
+  { id: "fakhar-gold", name: "Fakhar Gold", brand: "Lattafa", volume: "100ml", price: 32.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "hawas-kobra", name: "Hawas Kobra", brand: "Rasasi", volume: "100ml", price: 52.5, category: "Masculinos" },
+  { id: "asad-zanzibar-limited", name: "Asad Zanzibar Limited Edition", brand: "Lattafa", volume: "100ml", price: 29.5, category: "Masculinos" },
+  { id: "rayhaan-obsidian", name: "Obsidian", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "tiramisu-coco", name: "Tiramisu Coco", brand: "Zimaya", volume: "100ml", price: 42.5, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "amber-oud-gold", name: "Amber Oud Gold Edition", brand: "Al Haramain", volume: "60ml / 100ml", price: 74.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "voux-turquoise", name: "Voux Turquoise", brand: "Paris Corner", volume: "100ml", price: 38.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "platine-blanc", name: "Platine Blanc", brand: "Aromatix x French Avenue", volume: "100ml", price: 52.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "bayn-al-asrar", name: "Bayn Al Asrar", brand: "Paris Corner", volume: "100ml", price: 45.9, category: "Femininos" },
+  { id: "khamrah-qahwa", name: "Khamrah Qahwa", brand: "Lattafa", volume: "100ml", price: 42.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "asad", name: "Asad", brand: "Lattafa", volume: "100ml", price: 28, category: "Masculinos" },
+  { id: "saher", name: "Saher", brand: "Nusuk", volume: "100ml", price: 47.9, category: "Femininos" },
+  { id: "falak", name: "Falak", brand: "Nusuk", volume: "100ml", price: 52.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "rayhaan-terra", name: "Terra", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "rayhaan-wolf", name: "Wolf", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "jasoor", name: "Jasoor", brand: "Lattafa", volume: "100ml", price: 38.99, category: "Masculinos" },
+  { id: "ameerat-al-arab", name: "Ameerat Al Arab", brand: "Asdaaf", volume: "100ml", price: 32.5, category: "Femininos" },
+  { id: "narissa-for-her", name: "Narissa for Her", brand: "Maison Alhambra", volume: "100ml", price: 40, category: "Femininos" },
+  { id: "shiyaaka-white", name: "Shiyaaka White", brand: "Khadlaj", volume: "100ml", price: 38.9, category: "Femininos" },
+  { id: "atlas", name: "Atlas", brand: "Lattafa", volume: "55ml", price: 42, category: "Masculinos" },
+  { id: "the-kingdom", name: "The Kingdom", brand: "Lattafa", volume: "100ml", price: 38.9, category: "Femininos" },
+  { id: "victoria", name: "Victoria", brand: "Lattafa", volume: "100ml", price: 39.99, category: "Femininos" },
+  { id: "king-of-arabia", name: "King of Arabia + 4 decants", brand: "Lattafa", volume: "100ml", price: 55.9, category: "Masculinos" },
+  { id: "nasmaat", name: "Nasmaat", brand: "Lattafa", volume: "100ml", price: 38.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "mashrabya", name: "Mashrabya", brand: "Lattafa", volume: "100ml", price: 34.99, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "cordoba-rouge", name: "Cordoba Rouge", brand: "Mamlakat Al Oud", volume: "100ml", price: 42.5, category: "Femininos" },
+  { id: "asad-bourbon", name: "Asad Bourbon", brand: "Lattafa", volume: "100ml", price: 30.8, category: "Masculinos" },
+  { id: "aira", name: "Aira", brand: "Paris Corner", volume: "100ml", price: 42.9, category: "Femininos" },
+  { id: "rayhaan-italia", name: "Italia Pour Homme", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "bint-hooran-rose", name: "Bint Hooran Rose", brand: "Ard Al Zaafaran", volume: "100ml", price: 34.9, category: "Femininos" },
+  { id: "ana-abiyedh-white", name: "Ana Abiyedh White", brand: "Lattafa", volume: "60ml", price: 30.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "club-de-nuit-woman", name: "Club de Nuit Woman", brand: "Armaf", volume: "105ml", price: 48.9, category: "Femininos", bestSeller: true },
+  { id: "wadi", name: "Wadi", brand: "Maison Asrar", volume: "100ml", price: 42.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "bint-hooran", name: "Bint Hooran", brand: "Ard Al Zaafaran", volume: "100ml", price: 34.9, category: "Femininos" },
+  { id: "odyssey-spectra", name: "Odyssey Spectra", brand: "Armaf", volume: "100ml", price: 37.9, category: "Masculinos" },
+  { id: "chaos-extrait", name: "Chaos Extrait", brand: "French Avenue", volume: "100ml", price: 45.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "confidential-private-gold", name: "Confidential Private Gold", brand: "Lattafa", volume: "100ml", price: 32.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "queen-of-roses", name: "Queen of Roses + 4 decants", brand: "Lattafa", volume: "100ml", price: 47.9, category: "Femininos" },
+  { id: "pacific-blue", name: "Pacific Blue", brand: "Maison Alhambra", volume: "100ml", price: 38.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "ana-abiyedh-coral", name: "Ana Abiyedh Coral", brand: "Lattafa", volume: "60ml", price: 32.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "winners-trophy-gold", name: "Winner's Trophy Gold", brand: "Lattafa", volume: "100ml", price: 39.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "ana-abiyedh-passion", name: "Ana Abiyedh Passion", brand: "Lattafa", volume: "60ml", price: 35.9, category: "Femininos" },
+  { id: "aether-extrait", name: "Aether Extrait", brand: "French Avenue", volume: "100ml", price: 45.5, category: "Masculinos" },
+  { id: "rave-now-women", name: "Rave Now Women", brand: "Rave", volume: "100ml", price: 38.99, category: "Femininos" },
+  { id: "legacy-maison-asrar", name: "Legacy", brand: "Maison Asrar", volume: "100ml", price: 52.99, category: "Masculinos" },
+  { id: "asad-elixir", name: "Asad Elixir", brand: "Lattafa", volume: "100ml", price: 30.8, category: "Masculinos" },
+  { id: "passion", name: "Passion", brand: "Lattafa", volume: "65ml", price: 35.9, category: "Femininos" },
+  { id: "raghba-wood-intense", name: "Raghba Wood Intense", brand: "Lattafa", volume: "100ml", price: 25.5, category: "Masculinos" },
+  { id: "firestorm", name: "Firestorm", brand: "French Avenue", volume: "100ml", price: 48.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "hayaati", name: "Hayaati", brand: "Lattafa", volume: "100ml", price: 27.9, category: "Masculinos" },
+  { id: "musamam-black", name: "Musamam Black", brand: "Lattafa", volume: "100ml", price: 52.9, category: "Masculinos" },
+  { id: "rare-reef", name: "Rare Reef", brand: "Afnan", volume: "100ml", price: 42.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "9pm-night-out", name: "9PM Night Out", brand: "Afnan", volume: "100ml", price: 55.9, category: "Masculinos" },
+  { id: "mughal-fort", name: "Mughal Fort", brand: "Lattafa", volume: "100ml", price: 62.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "rayhaan-divine", name: "Divine", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "riiffs-freeze", name: "Freeze", brand: "Riiffs", volume: "100ml", price: 44.99, category: "Masculinos" },
+  { id: "rayhaan-floriana", name: "Floriana", brand: "Rayhaan", volume: "100ml", price: 42.9, category: "Femininos" },
+  { id: "yara-elixir", name: "Yara Elixir", brand: "Lattafa", volume: "100ml", price: 30.5, category: "Femininos" },
+  { id: "nebras", name: "Nebras", brand: "Lattafa", volume: "100ml", price: 42.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "qaed-al-fursan", name: "Qaed Al Fursan", brand: "Lattafa", volume: "100ml", price: 28.99, category: "Masculinos" },
+  { id: "philos-messenger", name: "Philos Messenger", brand: "Maison Alhambra", volume: "100ml", price: 38.99, category: "Masculinos" },
+  { id: "supremacy-collectors", name: "Supremacy Collector's Edition", brand: "Afnan", volume: "100ml", price: 74.9, category: "Masculinos", soldout: true },
+  { id: "reem", name: "Reem", brand: "Lattafa", volume: "100ml", price: 45, category: "Femininos" },
+  { id: "veneno-bianco", name: "Veneno Bianco", brand: "French Avenue", volume: "100ml", price: 52.5, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "angham-second-song", name: "Angham Second Song", brand: "Lattafa", volume: "100ml", price: 42.5, category: "Femininos" },
+  { id: "his-confession", name: "His Confession", brand: "Lattafa", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "dynasty", name: "Dynasty", brand: "Lattafa", volume: "100ml", price: 44.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "rayhaan-pacific-aura", name: "Pacific Aura", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "vulcan-baie", name: "Vulcan Baie", brand: "French Avenue", volume: "100ml", price: 44.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "rayhaan-elixir", name: "Elixir", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Masculinos" },
+  { id: "opulent-dubai", name: "Opulent Dubai", brand: "Lattafa", volume: "100ml", price: 32.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "amazon-rainfall", name: "Amazon Rainfall", brand: "Volaré", volume: "100ml", price: 34.9, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "rayhaan-tropical-vibe", name: "Tropical Vibe", brand: "Rayhaan", volume: "100ml", price: 45.9, category: "Unissexo", audiences: ["men", "women", "unisex"] },
+  { id: "december-vanille", name: "December Vanille", brand: "Paris Corner", volume: "100ml", price: 38.8, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "rayhaan-ocean-rush", name: "Ocean Rush", brand: "Rayhaan", volume: "100ml", price: 42.9, category: "Masculinos" },
+  { id: "hectic-bujairami", name: "Hectic", brand: "Bujairami", volume: "100ml", price: 64.99, category: "Unissexo", audiences: ["men", "unisex"] },
+  { id: "9pm", name: "9PM", brand: "Afnan", volume: "100ml", price: 37.9, category: "Masculinos", bestSeller: true },
+  { id: "angham", name: "Angham", brand: "Lattafa", volume: "100ml", price: 42.5, category: "Femininos" },
+  { id: "rayhaan-nocturno-elixir", name: "Nocturno Elixir", brand: "Rayhaan", volume: "100ml", price: 47.9, category: "Masculinos" },
+  { id: "yara-moi", name: "Yara Moi", brand: "Lattafa", volume: "100ml", price: 28.5, category: "Femininos" },
+  { id: "atheeri", name: "Atheeri", brand: "Lattafa", volume: "100ml", price: 48.5, category: "Femininos" },
+  { id: "amber-empire", name: "Amber Empire", brand: "French Avenue", volume: "100ml", price: 48.9, category: "Masculinos" },
+  { id: "kingsman", name: "Kingsman", brand: "Maison Alhambra", volume: "100ml", price: 34.9, category: "Masculinos" },
+  { id: "your-touch-for-women", name: "Your Touch for Women", brand: "Maison Alhambra", volume: "100ml", price: 32.9, category: "Femininos" },
+  { id: "barakkat-rouge-540", name: "Barakkat Rouge 540", brand: "Fragrance World", volume: "100ml", price: 29.9, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "odyssey-mandarin-sky", name: "Odyssey Mandarin Sky", brand: "Armaf", volume: "100ml", price: 38.9, category: "Masculinos" },
+  { id: "musamam-white", name: "Musamam White Intense", brand: "Lattafa", volume: "100ml", price: 49.5, category: "Unissexo", audiences: ["women", "unisex"] },
+  { id: "reyna", name: "Reyna", brand: "Maison Alhambra", volume: "100ml", price: 36.99, category: "Femininos" },
+  { id: "durrat-al-aroos", name: "Durrat Al Aroos", brand: "Al Wataniah", volume: "100ml", price: 32.9, category: "Femininos" },
+  { id: "spectre-wraith", name: "Spectre Wraith", brand: "French Avenue", volume: "100ml", price: 47.8, category: "Masculinos" },
+  { id: "your-touch-amber", name: "Your Touch Amber", brand: "Maison Alhambra", volume: "100ml", price: 35, category: "Masculinos" },
+  { id: "club-de-nuit-sillage", name: "Club de Nuit Sillage", brand: "Armaf", volume: "100ml", price: 45, category: "Masculinos" },
+];
+
+const PRODUCTS: Product[] = CATALOG.filter((seed) => seed.id !== "yara-50").map((seed, index) => {
+  const [color, accent, mood] = PRODUCT_PALETTES[index % PRODUCT_PALETTES.length];
+  const variants = [...fullSizeVariants(seed), ...decantVariants(seed.id, seed.price)];
+  return {
+    id: seed.id,
+    brand: seed.brand,
+    category: seed.category,
+    scentProfile: inferScentProfile(seed),
+    audiences: seed.audiences ?? [seed.category === "Masculinos" ? "men" : seed.category === "Femininos" ? "women" : "unisex"],
+    tag: seed.soldout ? "soldout" : index < 12 ? "new" : "stock",
+    bestSeller: seed.bestSeller,
+    name: { pt: seed.name, en: seed.name },
+    family: { pt: "Informação olfativa brevemente", en: "Olfactory details coming soon" },
+    desc: {
+      pt: `${seed.name}, de ${seed.brand}, disponível em ${seed.volume}.`,
+      en: `${seed.name} by ${seed.brand}, available in ${seed.volume}.`,
+    },
+    notes: {
+      top: { pt: [], en: [] },
+      heart: { pt: [], en: [] },
+      base: { pt: [], en: [] },
+    },
+    price: seed.price,
+    volume: variants[0].volume,
+    variants,
+    color,
+    accent,
+    mood,
+    imageUrl: PRODUCT_IMAGE_IDS.has(seed.id) ? `/products/${seed.id}.webp` : undefined,
+  };
+});
+
+const DECANT_PRODUCTS: Product[] = PRODUCTS.flatMap((product) => {
+  const variants = product.variants.filter((variant) => variant.isDecant);
+  const firstVariant = variants[0];
+  if (!firstVariant) return [];
+  return [{
+    ...product,
+    id: `decant-${product.id}`,
+    name: {
+      pt: `${product.name.pt} · Decant`,
+      en: `${product.name.en} · Decant`,
+    },
+    price: firstVariant.price,
+    volume: firstVariant.volume,
+    variants,
+    tag: "stock" as const,
+    bestSeller: false,
+    isDecant: true,
+  }];
+});
+
+const INITIAL_PRODUCTS = [...PRODUCTS, ...DECANT_PRODUCTS];
+
+const shopMenu = {
+  buy: [
+    { kind: "all" as const, label: { pt: "Ver todos", en: "View all" } },
+    { kind: "men" as const, label: { pt: "Perfumes Masculinos", en: "Men's fragrances" } },
+    { kind: "women" as const, label: { pt: "Perfumes Femininos", en: "Women's fragrances" } },
+    { kind: "unisex" as const, label: { pt: "Perfumes Unissexo", en: "Unisex fragrances" } },
+  ],
+  discover: ["Novidades", "Best sellers", "Decants 5 ml"],
+};
+
+const DISCOUNTS: Record<string, number> = {};
+
+const PROMOTION_ENDS: Record<string, string> = Object.fromEntries(
+  Object.keys(DISCOUNTS).map((id) => [id, "2026-08-20T22:59:00.000Z"]),
+);
+
+function price(value: number, lang: Lang) {
+  return new Intl.NumberFormat(lang === "pt" ? "pt-PT" : "en-IE", {
+    style: "currency",
+    currency: "EUR",
+  }).format(value);
+}
+
+function productSet(products: Product[], kind: ListingKind) {
+  if (kind === "decants") return products.filter((product) => product.isDecant);
+  const fullSizes = products.filter((product) => !product.isDecant);
+  if (kind === "men") return fullSizes.filter((product) => product.audiences.includes("men"));
+  if (kind === "women") return fullSizes.filter((product) => product.audiences.includes("women"));
+  if (kind === "unisex") return fullSizes.filter((product) => product.audiences.includes("unisex"));
+  if (kind === "new") return fullSizes.filter((product) => product.tag === "new" || product.tag === "soldout");
+  if (kind === "best") return fullSizes.filter((product) => product.bestSeller);
+  if (kind === "sale") return fullSizes.filter((product) => productDiscount(product) > 0);
+  return fullSizes;
+}
+
+function productsForProfile(products: Product[], profile: ScentProfile) {
+  return products.filter((product) => !product.isDecant && product.scentProfile === profile);
+}
+
+function productPromotionEnd(product: Product) {
+  if (Object.prototype.hasOwnProperty.call(product, "promotionEndsAt")) return product.promotionEndsAt;
+  return PROMOTION_ENDS[product.id];
+}
+
+function productDiscount(product: Product, now = Date.now()) {
+  const discount = Object.prototype.hasOwnProperty.call(product, "discount") ? product.discount ?? 0 : DISCOUNTS[product.id] ?? 0;
+  const endsAt = productPromotionEnd(product);
+  if (endsAt && new Date(endsAt).getTime() <= now) return 0;
+  return discount;
+}
+
+function productPrice(product: Product) {
+  const discount = productDiscount(product);
+  return discount ? product.price * (1 - discount / 100) : product.price;
+}
+
+function toDateTimeInput(value?: string) {
+  const date = value ? new Date(value) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function formatCountdown(endsAt: string, now: number, lang: Lang) {
+  const remaining = Math.max(0, new Date(endsAt).getTime() - now);
+  if (remaining <= 0) return lang === "pt" ? "Promoção terminada" : "Promotion ended";
+  const days = Math.floor(remaining / 86_400_000);
+  const hours = Math.floor((remaining % 86_400_000) / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+  const seconds = Math.floor((remaining % 60_000) / 1000);
+  const prefix = lang === "pt" ? "Termina em" : "Ends in";
+  if (days > 0) {
+    const dayLabel = lang === "pt" ? (days === 1 ? "dia" : "dias") : (days === 1 ? "day" : "days");
+    const hourLabel = lang === "pt" ? (hours === 1 ? "hora" : "horas") : (hours === 1 ? "hour" : "hours");
+    return `${prefix} ${days} ${dayLabel}${hours > 0 ? ` ${lang === "pt" ? "e" : "and"} ${hours} ${hourLabel}` : ""}`;
+  }
+  if (hours > 0) {
+    const hourLabel = lang === "pt" ? (hours === 1 ? "hora" : "horas") : (hours === 1 ? "hour" : "hours");
+    const minuteLabel = lang === "pt" ? (minutes === 1 ? "minuto" : "minutos") : (minutes === 1 ? "minute" : "minutes");
+    return `${prefix} ${hours} ${hourLabel}${minutes > 0 ? ` ${lang === "pt" ? "e" : "and"} ${minutes} ${minuteLabel}` : ""}`;
+  }
+  if (minutes > 0) return `${prefix} ${minutes} ${lang === "pt" ? (minutes === 1 ? "minuto" : "minutos") : (minutes === 1 ? "minute" : "minutes")}`;
+  return `${prefix} ${seconds} ${lang === "pt" ? (seconds === 1 ? "segundo" : "segundos") : (seconds === 1 ? "second" : "seconds")}`;
+}
+
+function formatFullCountdown(endsAt: string, now: number) {
+  const remaining = Math.max(0, new Date(endsAt).getTime() - now);
+  const hours = Math.floor(remaining / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+  const seconds = Math.floor((remaining % 60_000) / 1000);
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function usePromotionClock(product: Product) {
+  const endsAt = productPromotionEnd(product);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!endsAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [endsAt]);
+  return { endsAt, now };
+}
+
+export default function Home() {
+  const [lang, setLang] = useState<Lang>("pt");
+  const [view, setView] = useState<View>("home");
+  const [catalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [session, setSession] = useState<Session | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [favoriteFolders, setFavoriteFolders] = useState<FavoriteFolder[]>([]);
+  const [favoriteProductId, setFavoriteProductId] = useState<string | null>(null);
+  const [pendingFavoriteId, setPendingFavoriteId] = useState<string | null>(null);
+  const [listing, setListing] = useState<ListingKind>("all");
+  const [profileFilter, setProfileFilter] = useState<ScentProfile | null>(null);
+  const [activeId, setActiveId] = useState(PRODUCTS[0].id);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [query, setQuery] = useState("");
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteFavorites = useRef("");
+  const t = COPY[lang];
+
+  const activeProduct = catalog.find((product) => product.id === activeId) ?? catalog[0] ?? PRODUCTS[0];
+  const favoriteProduct = catalog.find((product) => product.id === favoriteProductId) ?? null;
+  const listingProducts = profileFilter ? productsForProfile(catalog, profileFilter) : productSet(catalog, listing);
+  const searchResults = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return catalog.filter((product) => {
+      const haystack = [
+        product.name[lang],
+        product.brand,
+        product.family[lang],
+        product.category,
+        ...product.notes.top[lang],
+        ...product.notes.heart[lang],
+        ...product.notes.base[lang],
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    }).slice(0, 5);
+  }, [query, lang, catalog]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [view, listing, activeId, profileFilter]);
+
+  useEffect(() => {
+    const syncFromAddress = () => applyRoute(routeFromPath(window.location.pathname));
+    syncFromAddress();
+    window.addEventListener("popstate", syncFromAddress);
+    return () => window.removeEventListener("popstate", syncFromAddress);
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("drawer-lock", cartOpen || mobileOpen);
+    return () => document.body.classList.remove("drawer-lock");
+  }, [cartOpen, mobileOpen]);
+
+  useEffect(() => watchSession((nextSession) => setSession(nextSession)), []);
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    return watchProducts<Product>((products) => {
+      if (products.length) {
+        setCatalog(products.map((product) => {
+          if (product.imageUrl) return product;
+          const baseId = product.id.startsWith("decant-") ? product.id.slice(7) : product.id;
+          return PRODUCT_IMAGE_IDS.has(baseId)
+            ? { ...product, imageUrl: `/products/${baseId}.webp` }
+            : product;
+        }));
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!session || !firebaseEnabled) {
+      if (!session) setOrders([]);
+      return;
+    }
+    return watchOrders<Order>(session, setOrders);
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || session.role !== "customer" || !firebaseEnabled) return;
+    return watchFavoriteFolders<FavoriteFolder>(session.uid, (folders) => {
+      remoteFavorites.current = JSON.stringify(folders);
+      setFavoriteFolders(folders);
+    });
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || session.role !== "customer" || !firebaseEnabled) return;
+    const next = JSON.stringify(favoriteFolders);
+    if (next === remoteFavorites.current) return;
+    remoteFavorites.current = next;
+    void saveFavoriteFolders(session.uid, favoriteFolders);
+  }, [favoriteFolders, session]);
+
+  function showToast(message: string) {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 2200);
+  }
+
+  function applyRoute(route: AppRoute) {
+    setView(route.view);
+    setListing(route.listing);
+    setProfileFilter(route.profileFilter);
+    if (route.activeId) setActiveId(route.activeId);
+    setMobileOpen(false);
+    setCartOpen(false);
+  }
+
+  function navigate(path: string, route: AppRoute) {
+    if (window.location.pathname !== path) window.history.pushState({ mysticRoute: true }, "", path);
+    applyRoute(route);
+  }
+
+  function openHome() {
+    navigate("/", { view: "home", listing: "all", profileFilter: null });
+  }
+
+  function openListing(kind: ListingKind) {
+    navigate(LISTING_PATHS[kind], { view: "listing", listing: kind, profileFilter: null });
+  }
+
+  function openProfile(profile: ScentProfile) {
+    navigate(`/perfil-olfativo/${profile}`, { view: "listing", listing: "all", profileFilter: profile });
+  }
+
+  function openProduct(id: string) {
+    navigate(`/produto/${encodeURIComponent(id)}`, { view: "product", listing, profileFilter, activeId: id });
+    setQuery("");
+  }
+
+  function addToCart(product: Product, quantity = 1) {
+    if (product.tag === "soldout") return;
+    const amount = Math.min(9, Math.max(1, quantity));
+    setCart((items) => {
+      const existing = items.find((item) => item.id === product.id);
+      if (existing) {
+        return items.map((item) => (item.id === product.id ? { ...item, qty: Math.min(9, item.qty + amount) } : item));
+      }
+      return [...items, { ...product, price: productPrice(product), qty: amount }];
+    });
+    showToast(lang === "pt" ? "Adicionado ao carrinho" : "Added to cart");
+  }
+
+  function updateQty(id: string, qty: number) {
+    setCart((items) => items.map((item) => (item.id === id ? { ...item, qty } : item)));
+  }
+
+  function removeItem(id: string) {
+    setCart((items) => items.filter((item) => item.id !== id));
+  }
+
+  function openFavorite(product: Product) {
+    if (!session || session.role !== "customer") {
+      setPendingFavoriteId(product.id);
+      navigate("/conta", { view: "account", listing, profileFilter });
+      showToast(lang === "pt" ? "Entre na sua conta para guardar favoritos" : "Sign in to save favourites");
+      return;
+    }
+    setFavoriteProductId(product.id);
+  }
+
+  const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+
+  return (
+    <div className="site-shell">
+      <Header
+        lang={lang}
+        setLang={setLang}
+        t={t}
+        session={session}
+        cartCount={cartCount}
+        query={query}
+        setQuery={setQuery}
+        searchResults={searchResults}
+        onHome={openHome}
+        onListing={openListing}
+        onProduct={openProduct}
+        onCart={() => setCartOpen(true)}
+        onAccount={() => session?.role === "admin"
+          ? navigate("/admin", { view: "admin", listing, profileFilter })
+          : navigate("/conta", { view: "account", listing, profileFilter })}
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+      />
+
+      <main>
+        {view === "home" && (
+          <>
+            <Hero t={t} lang={lang} onListing={openListing} />
+            <DiscoveryCarousel products={catalog} lang={lang} onListing={openListing} />
+            <div className="home-decant-feature">
+              <DecantPromo lang={lang} />
+            </div>
+            <NewArrivals products={catalog} t={t} lang={lang} onListing={openListing} onProduct={openProduct} onFavorite={openFavorite} favoriteFolders={favoriteFolders} />
+            <WhatsAppConsultationBanner />
+            <ScentProfiles lang={lang} onProfile={openProfile} />
+            <StoreStrip t={t} />
+            <BrandBand />
+          </>
+        )}
+
+        {view === "listing" && (
+          <ListingPage
+            t={t}
+            lang={lang}
+            kind={listing}
+            profile={profileFilter}
+            products={listingProducts}
+            onProduct={openProduct}
+            onFavorite={openFavorite}
+            favoriteFolders={favoriteFolders}
+          />
+        )}
+
+        {view === "product" && (
+          <ProductDetail
+            key={activeProduct.id}
+            t={t}
+            lang={lang}
+            product={activeProduct}
+            products={catalog}
+            onListing={openListing}
+            onProduct={openProduct}
+            onCart={addToCart}
+            onFavorite={openFavorite}
+            favoriteFolders={favoriteFolders}
+          />
+        )}
+
+        {view === "checkout" && (
+          <CheckoutPage
+            t={t}
+            lang={lang}
+            cart={cart}
+            onCreateOrder={(order) => {
+              setOrders((items) => [order, ...items]);
+              setCart([]);
+            }}
+            onBack={openHome}
+          />
+        )}
+
+        {view === "account" && (
+          <AccountPage
+            lang={lang}
+            session={session}
+            products={catalog}
+            orders={orders}
+            favoriteFolders={favoriteFolders}
+            setFavoriteFolders={setFavoriteFolders}
+            onProduct={openProduct}
+            onSession={(nextSession) => {
+              setSession(nextSession);
+              if (nextSession.role === "admin") {
+                navigate("/admin", { view: "admin", listing, profileFilter });
+              } else if (pendingFavoriteId) {
+                setFavoriteProductId(pendingFavoriteId);
+                setPendingFavoriteId(null);
+              }
+            }}
+            onLogout={() => {
+              void logoutFirebase();
+              setSession(null);
+            }}
+            onShop={openHome}
+          />
+        )}
+
+        {view === "admin" && session?.role === "admin" && (
+          <AdminPage
+            lang={lang}
+            products={catalog}
+            setProducts={setCatalog}
+            orders={orders}
+            setOrders={setOrders}
+            session={session}
+            onShop={openHome}
+            onLogout={() => {
+              void logoutFirebase();
+              setSession(null);
+              navigate("/conta", { view: "account", listing, profileFilter });
+            }}
+          />
+        )}
+      </main>
+
+      <Footer t={t} />
+      <CartDrawer
+        t={t}
+        lang={lang}
+        open={cartOpen}
+        cart={cart}
+        onClose={() => setCartOpen(false)}
+        onUpdate={updateQty}
+        onRemove={removeItem}
+        onCheckout={() => {
+          setCartOpen(false);
+          navigate("/checkout", { view: "checkout", listing, profileFilter });
+        }}
+      />
+      <FavoritePicker
+        lang={lang}
+        product={favoriteProduct}
+        folders={favoriteFolders}
+        setFolders={setFavoriteFolders}
+        onClose={() => setFavoriteProductId(null)}
+        onSaved={(message) => showToast(message)}
+      />
+      <a
+        className="whatsapp-help"
+        href="https://wa.me/351938258798?text=Ol%C3%A1%21%20Preciso%20de%20ajuda."
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Precisa de recomendações? Falar no WhatsApp"
+      >
+        <MessageCircle size={21} />
+        <span>Precisa de recomendações?</span>
+      </a>
+      {toast && (
+        <div className="toast">
+          <Check size={16} />
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Header({
+  lang,
+  setLang,
+  t,
+  session,
+  cartCount,
+  query,
+  setQuery,
+  searchResults,
+  onHome,
+  onListing,
+  onProduct,
+  onCart,
+  onAccount,
+  mobileOpen,
+  setMobileOpen,
+}: {
+  lang: Lang;
+  setLang: (lang: Lang) => void;
+  t: (typeof COPY)[Lang];
+  session: Session | null;
+  cartCount: number;
+  query: string;
+  setQuery: (value: string) => void;
+  searchResults: Product[];
+  onHome: () => void;
+  onListing: (kind: ListingKind) => void;
+  onProduct: (id: string) => void;
+  onCart: () => void;
+  onAccount: () => void;
+  mobileOpen: boolean;
+  setMobileOpen: (open: boolean) => void;
+}) {
+  return (
+    <header className="header">
+      <div className="announcement" aria-label="Store announcement">
+        <span>Envios gratuitos a partir de 85 € para Portugal Continental</span>
+        <i />
+        <span>Perfumes árabes em Santa Maria da Feira</span>
+      </div>
+
+      <div className="brand-row">
+        <button
+          className="mobile-menu-button"
+          onClick={() => setMobileOpen(!mobileOpen)}
+          aria-label={lang === "pt" ? "Abrir menu" : "Open menu"}
+          aria-expanded={mobileOpen}
+        >
+          <Menu size={22} />
+        </button>
+        <button className="brand-logo" onClick={onHome} aria-label="Mystic Essence homepage">
+          <Image src="/mystic-essence-wordmark.png" width={1206} height={254} alt="Mystic Essence" priority />
+        </button>
+        <nav className="gold-nav" aria-label="Primary navigation">
+          <div className="nav-item has-mega">
+            <button onClick={() => onListing("all")}>{t.nav.perfumes}</button>
+            <PerfumeMega t={t} lang={lang} onListing={onListing} />
+          </div>
+          <div className="nav-item has-mega">
+            <button type="button">{t.nav.brands}</button>
+            <BrandMega />
+          </div>
+          <div className="nav-item">
+            <button onClick={() => onListing("new")}>{t.nav.newIn}</button>
+          </div>
+          <div className="nav-item">
+            <button onClick={() => onListing("sale")}>{t.nav.sale}</button>
+          </div>
+        </nav>
+        <div className="header-actions">
+          <div className="lang-pill" aria-label="Language switch">
+            <Globe2 size={16} />
+            <button className={lang === "pt" ? "active" : ""} onClick={() => setLang("pt")}>PT</button>
+            <button className={lang === "en" ? "active" : ""} onClick={() => setLang("en")}>EN</button>
+          </div>
+          <button className="account-pill" onClick={onAccount} aria-label={t.account}>
+            <User size={17} />
+            <span>{session?.role === "admin" ? "Admin" : session?.name.split(" ")[0] || t.account}</span>
+          </button>
+          <div className="search-wrap">
+            <Search className="search-icon" size={20} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} />
+            {query.trim() && (
+              <div className="search-panel">
+                {searchResults.length === 0 ? (
+                  <p>{lang === "pt" ? "Sem resultados" : "No results"}</p>
+                ) : (
+                  searchResults.map((product) => (
+                    <button key={product.id} onClick={() => onProduct(product.id)}>
+                      <ProductVisual product={product} compact />
+                      <span>
+                        <strong>{product.name[lang]}</strong>
+                        <small>{product.brand} · {price(product.price, lang)}</small>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            className="mobile-account-button"
+            onClick={onAccount}
+            aria-label={lang === "pt" ? "Entrar ou criar conta" : "Sign in or create account"}
+          >
+            <User size={21} />
+          </button>
+          <button className="cart-button" onClick={onCart} aria-label={t.cart}>
+            <ShoppingBag size={22} />
+            <span>{cartCount}</span>
+          </button>
+        </div>
+      </div>
+
+      {mobileOpen && (
+        <div className="mobile-menu-layer">
+          <button className="mobile-menu-backdrop" onClick={() => setMobileOpen(false)} aria-label={lang === "pt" ? "Fechar menu" : "Close menu"} />
+          <div className="mobile-panel" role="dialog" aria-label={lang === "pt" ? "Menu de navegação" : "Navigation menu"}>
+            <div className="mobile-panel-head">
+              <strong>{lang === "pt" ? "Menu" : "Menu"}</strong>
+              <button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label={lang === "pt" ? "Fechar menu" : "Close menu"}><X size={22} /></button>
+            </div>
+            <div className="mobile-search">
+              <Search size={18} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} aria-label={t.search} />
+              {query.trim() && (
+                <div className="mobile-search-results">
+                  {searchResults.length === 0 ? <p>{lang === "pt" ? "Sem resultados" : "No results"}</p> : searchResults.map((product) => (
+                    <button key={product.id} onClick={() => onProduct(product.id)}>
+                      <span><strong>{product.name[lang]}</strong><small>{product.brand} · {price(product.price, lang)}</small></span>
+                      <ChevronRight size={16} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <nav className="mobile-nav" aria-label={lang === "pt" ? "Navegação mobile" : "Mobile navigation"}>
+              <button onClick={() => onListing("all")}><span>{lang === "pt" ? "Ver todos" : "View all"}</span><ChevronRight size={17} /></button>
+              <button onClick={() => onListing("men")}><span>{lang === "pt" ? "Perfumes masculinos" : "Men's fragrances"}</span><ChevronRight size={17} /></button>
+              <button onClick={() => onListing("women")}><span>{lang === "pt" ? "Perfumes femininos" : "Women's fragrances"}</span><ChevronRight size={17} /></button>
+              <button onClick={() => onListing("unisex")}><span>{lang === "pt" ? "Perfumes unissexo" : "Unisex fragrances"}</span><ChevronRight size={17} /></button>
+              <button onClick={() => onListing("all")}><span>{t.nav.brands}</span><ChevronRight size={17} /></button>
+              <button onClick={() => onListing("new")}><span>{t.nav.newIn}</span><ChevronRight size={17} /></button>
+              <button onClick={() => onListing("sale")}><span>{t.nav.sale}</span><ChevronRight size={17} /></button>
+              <button className="mobile-account-link" onClick={() => { setMobileOpen(false); onAccount(); }}>
+                <span><User size={17} />{session?.role === "admin" ? "Admin" : session?.name.split(" ")[0] || (lang === "pt" ? "Entrar / Criar conta" : "Sign in / Create account")}</span>
+                <ChevronRight size={17} />
+              </button>
+            </nav>
+            <div className="mobile-language" aria-label="Language switch">
+              <Globe2 size={16} />
+              <button className={lang === "pt" ? "active" : ""} onClick={() => setLang("pt")}>PT</button>
+              <button className={lang === "en" ? "active" : ""} onClick={() => setLang("en")}>EN</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+}
+
+function PerfumeMega({ t, lang, onListing }: { t: (typeof COPY)[Lang]; lang: Lang; onListing: (kind: ListingKind) => void }) {
+  return (
+    <div className="mega perfume-mega">
+      {shopMenu.buy.map((item) => <button key={item.kind} onClick={() => onListing(item.kind)}>{item.label[lang]}</button>)}
+      <button onClick={() => onListing("best")}>{t.nav.best}</button>
+    </div>
+  );
+}
+
+function BrandMega() {
+  return (
+    <div className="mega brand-mega">
+      {BRANDS.map((brand) => <button key={brand}>{brand}</button>)}
+    </div>
+  );
+}
+
+function Hero({ t, lang, onListing }: { t: (typeof COPY)[Lang]; lang: Lang; onListing: (kind: ListingKind) => void }) {
+  const trustItems = lang === "pt"
+    ? [
+        { icon: Truck, title: "Envios rápidos", detail: "Portugal, ilhas e Espanha" },
+        { icon: Boxes, title: "Portes grátis", detail: "Em compras acima de 85 €" },
+        { icon: BadgeCheck, title: "100% originais", detail: "Seleção de marcas árabes" },
+        { icon: Headphones, title: "Apoio personalizado", detail: "Ajuda a escolher o perfume ideal" },
+      ]
+    : [
+        { icon: Truck, title: "Fast delivery", detail: "Portugal, islands and Spain" },
+        { icon: Boxes, title: "Free shipping", detail: "On orders over 85 €" },
+        { icon: BadgeCheck, title: "100% authentic", detail: "Selected Arabian brands" },
+        { icon: Headphones, title: "Personal service", detail: "Help choosing your ideal scent" },
+      ];
+
+  return (
+    <section className="hero">
+      <div className="hero-main">
+        <div className="hero-copy">
+          <Image className="hero-emblem" src="/mystic-essence-hero-logo.png" width={498} height={501} alt="Mystic Essence" priority />
+          <h1>{lang === "pt" ? "Perfumaria Árabe" : "Arabian Perfumery"}</h1>
+          <p>{t.heroSub}</p>
+          <div className="hero-actions">
+            <button className="primary-button" onClick={() => onListing("all")}>{t.heroCta}</button>
+            <button className="ghost-button" onClick={() => onListing("new")}>{t.heroSecond}</button>
+          </div>
+          <span className="hero-signoff">{lang === "pt" ? "Descobre a tua essência ideal na Mystic" : "Discover your ideal essence at Mystic"}</span>
+        </div>
+        <div className="hero-stage">
+          <div className="hero-store-image">
+            <Image
+              src="/mystic-essence-store-saturated.png"
+              fill
+              sizes="(max-width: 940px) 100vw, 62vw"
+              alt="Interior da loja Mystic Essence em Santa Maria da Feira"
+              priority
+            />
+          </div>
+          <span className="hero-image-caption">Santa Maria da Feira · Aveiro</span>
+        </div>
+      </div>
+      <div className="hero-trust" aria-label={lang === "pt" ? "Vantagens da loja" : "Store benefits"}>
+        {trustItems.map(({ icon: Icon, title, detail }) => (
+          <div className="hero-trust-item" key={title}>
+            <Icon size={32} strokeWidth={1.45} />
+            <span><strong>{title}</strong><small>{detail}</small></span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DiscoveryCarousel({
+  products,
+  lang,
+  onListing,
+}: {
+  products: Product[];
+  lang: Lang;
+  onListing: (kind: ListingKind) => void;
+}) {
+  const [active, setActive] = useState(2);
+  const [paused, setPaused] = useState(false);
+  const slides = [
+    {
+      eyebrow: lang === "pt" ? "Oportunidades especiais" : "Special offers",
+      title: lang === "pt" ? "Promoções" : "Promotions",
+      description: lang === "pt" ? "Preços especiais por tempo limitado." : "Special prices for a limited time.",
+      action: lang === "pt" ? "Ver promoções" : "View promotions",
+      kind: "sale" as ListingKind,
+      product: products.find((product) => productDiscount(product) > 0) ?? products[0],
+    },
+    {
+      eyebrow: lang === "pt" ? "Os mais desejados" : "Most wanted",
+      title: "Best sellers",
+      description: lang === "pt" ? "Os aromas que todos querem conhecer." : "The scents everyone wants to discover.",
+      action: lang === "pt" ? "Ver best sellers" : "View best sellers",
+      kind: "best" as ListingKind,
+      product: products.find((product) => product.bestSeller) ?? products[1],
+    },
+    {
+      eyebrow: lang === "pt" ? "Perfumes masculinos" : "Men's fragrances",
+      title: lang === "pt" ? "Masculino" : "For him",
+      description: lang === "pt" ? "Intenso, elegante e marcante." : "Intense, elegant and distinctive.",
+      action: lang === "pt" ? "Ver perfumes" : "View fragrances",
+      kind: "men" as ListingKind,
+      product: products.find((product) => product.category === "Masculinos") ?? products[2],
+    },
+    {
+      eyebrow: lang === "pt" ? "Perfumes femininos" : "Women's fragrances",
+      title: lang === "pt" ? "Feminino" : "For her",
+      description: lang === "pt" ? "Envolvente, luminoso e inesquecível." : "Captivating, luminous and unforgettable.",
+      action: lang === "pt" ? "Ver perfumes" : "View fragrances",
+      kind: "women" as ListingKind,
+      product: products.find((product) => product.category === "Femininos") ?? products[3],
+    },
+    {
+      eyebrow: lang === "pt" ? "Sem rótulos" : "Beyond labels",
+      title: lang === "pt" ? "Unissexo" : "Unisex",
+      description: lang === "pt" ? "Fragrâncias feitas para partilhar." : "Fragrances made to be shared.",
+      action: lang === "pt" ? "Descobrir seleção" : "Discover selection",
+      kind: "unisex" as ListingKind,
+      product: products.find((product) => product.category === "Unissexo") ?? products[4],
+    },
+  ];
+
+  useEffect(() => {
+    if (paused) return;
+    const timer = window.setInterval(() => setActive((current) => (current + 1) % slides.length), 5200);
+    return () => window.clearInterval(timer);
+  }, [paused, slides.length]);
+
+  function move(direction: number) {
+    setActive((current) => (current + direction + slides.length) % slides.length);
+  }
+
+  return (
+    <section
+      className="discovery-carousel"
+      aria-roledescription="carousel"
+      aria-label={lang === "pt" ? "Descobrir perfumes por coleção" : "Discover fragrances by collection"}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+    >
+      <div className="discovery-carousel-heading">
+        <span aria-hidden="true" />
+        <p>{lang === "pt" ? "Explora por estilo e encontra o aroma certo para cada momento." : "Explore by style and find the right scent for every moment."}</p>
+      </div>
+
+      <div className="discovery-carousel-stage">
+        {slides.map((slide, index) => {
+          let offset = (index - active + slides.length) % slides.length;
+          if (offset > Math.floor(slides.length / 2)) offset -= slides.length;
+          const position = offset === 0 ? "is-active" : `${offset < 0 ? "is-left" : "is-right"}-${Math.abs(offset)}`;
+          return (
+            <article className={`discovery-slide ${position}`} key={slide.title} aria-hidden={offset !== 0}>
+              <button
+                className="discovery-slide-button"
+                onClick={() => offset === 0 ? onListing(slide.kind) : setActive(index)}
+                tabIndex={offset === 0 ? 0 : -1}
+                aria-label={`${slide.title}: ${slide.action}`}
+              >
+                <ProductVisual product={slide.product} />
+                <span className="discovery-slide-shine" aria-hidden="true" />
+                <span className="discovery-slide-copy">
+                  <small>{slide.eyebrow}</small>
+                  <strong>{slide.title}</strong>
+                  <span>{slide.description}</span>
+                  <i>{slide.action}<ChevronRight size={16} /></i>
+                </span>
+              </button>
+            </article>
+          );
+        })}
+
+        <button className="discovery-arrow discovery-arrow-left" onClick={() => move(-1)} aria-label={lang === "pt" ? "Anterior" : "Previous"}><ChevronLeft size={23} /></button>
+        <button className="discovery-arrow discovery-arrow-right" onClick={() => move(1)} aria-label={lang === "pt" ? "Seguinte" : "Next"}><ChevronRight size={23} /></button>
+      </div>
+
+      <div className="discovery-dots" aria-label={lang === "pt" ? "Escolher slide" : "Choose slide"}>
+        {slides.map((slide, index) => (
+          <button key={slide.title} className={index === active ? "active" : ""} onClick={() => setActive(index)} aria-label={`${index + 1}: ${slide.title}`} aria-current={index === active ? "true" : undefined} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NewArrivals({
+  products,
+  t,
+  lang,
+  onListing,
+  onProduct,
+  onFavorite,
+  favoriteFolders,
+}: {
+  products: Product[];
+  t: (typeof COPY)[Lang];
+  lang: Lang;
+  onListing: (kind: ListingKind) => void;
+  onProduct: (id: string) => void;
+  onFavorite: (product: Product) => void;
+  favoriteFolders: FavoriteFolder[];
+}) {
+  const arrivals = products.filter((product) => !product.isDecant && product.tag === "new").slice(0, 12);
+  const [activeArrival, setActiveArrival] = useState(0);
+  const safeActive = arrivals.length ? activeArrival % arrivals.length : 0;
+  const activeProduct = arrivals[safeActive];
+  const previousProduct = arrivals[(safeActive - 1 + arrivals.length) % arrivals.length];
+  const nextProduct = arrivals[(safeActive + 1) % arrivals.length];
+
+  function slide(direction: number) {
+    if (!arrivals.length) return;
+    setActiveArrival((current) => (current + direction + arrivals.length) % arrivals.length);
+  }
+
+  if (!activeProduct) return null;
+
+  const activePrice = productPrice(activeProduct);
+  const activeIsFavorite = favoriteFolders.some((folder) => folder.productIds.includes(activeProduct.id));
+
+  return (
+    <section className="new-arrivals-carousel">
+      <div className="new-arrivals-heading">
+        <div>
+          <span>{lang === "pt" ? "Acabaram de chegar" : "Just arrived"}</span>
+          <h2>{t.newTitle}</h2>
+        </div>
+        <p>{lang === "pt" ? "Novas essências, novas histórias para descobrir." : "New scents, new stories to discover."}</p>
+        <button onClick={() => onListing("new")}>{lang === "pt" ? "Ver todas" : "View all"}<ChevronRight size={15} /></button>
+      </div>
+
+      <div className="new-arrivals-window">
+        <button className="new-arrival-preview new-arrival-preview-left" onClick={() => slide(-1)} aria-label={lang === "pt" ? `Ver ${previousProduct.name.pt}` : `View ${previousProduct.name.en}`}>
+          <div className="new-arrival-preview-art" style={{ "--pack": previousProduct.color, "--pack-accent": previousProduct.accent } as React.CSSProperties}>
+            <ProductVisual product={previousProduct} compact />
+          </div>
+          <span>{previousProduct.brand}</span>
+          <strong>{previousProduct.name[lang]}</strong>
+        </button>
+
+        <article key={activeProduct.id} className="new-arrival-feature" style={{ "--pack": activeProduct.color, "--pack-accent": activeProduct.accent } as React.CSSProperties}>
+          <button className="new-arrival-feature-art" onClick={() => onProduct(activeProduct.id)} aria-label={activeProduct.name[lang]}>
+            <span className="new-arrival-brand-mark">{activeProduct.brand}</span>
+            <ProductVisual product={activeProduct} />
+          </button>
+
+          <div className="new-arrival-feature-copy">
+            <span className="new-arrival-kicker">{lang === "pt" ? "Nova chegada" : "New arrival"}</span>
+            <h3>{activeProduct.name[lang]}</h3>
+            <p>{activeProduct.brand} · {activeProduct.volume}</p>
+            <div className="new-arrival-rating"><span>☆☆☆☆☆</span><small>{lang === "pt" ? "Ainda sem avaliações" : "No reviews yet"}</small></div>
+            <strong>{lang === "pt" ? "A partir de " : "From "}{price(activePrice, lang)}</strong>
+            <div className="new-arrival-actions">
+              <button onClick={() => onProduct(activeProduct.id)}>{lang === "pt" ? "Descobrir perfume" : "Discover fragrance"}<ChevronRight size={16} /></button>
+              <button className={activeIsFavorite ? "saved" : ""} onClick={() => onFavorite(activeProduct)} aria-label={lang === "pt" ? "Adicionar aos favoritos" : "Add to favourites"}><Heart size={19} fill={activeIsFavorite ? "currentColor" : "none"} /></button>
+            </div>
+          </div>
+        </article>
+
+        <button className="new-arrival-preview new-arrival-preview-right" onClick={() => slide(1)} aria-label={lang === "pt" ? `Ver ${nextProduct.name.pt}` : `View ${nextProduct.name.en}`}>
+          <div className="new-arrival-preview-art" style={{ "--pack": nextProduct.color, "--pack-accent": nextProduct.accent } as React.CSSProperties}>
+            <ProductVisual product={nextProduct} compact />
+          </div>
+          <span>{nextProduct.brand}</span>
+          <strong>{nextProduct.name[lang]}</strong>
+        </button>
+
+        <button className="new-arrival-arrow new-arrival-arrow-left" onClick={() => slide(-1)} aria-label={lang === "pt" ? "Novidade anterior" : "Previous new arrival"}><ChevronLeft size={23} /></button>
+        <button className="new-arrival-arrow new-arrival-arrow-right" onClick={() => slide(1)} aria-label={lang === "pt" ? "Novidade seguinte" : "Next new arrival"}><ChevronRight size={23} /></button>
+      </div>
+
+      <div className="new-arrival-pagination">
+        <span>{String(safeActive + 1).padStart(2, "0")}</span>
+        <div>
+          {arrivals.map((product, index) => (
+            <button key={product.id} className={index === safeActive ? "active" : ""} onClick={() => setActiveArrival(index)} aria-label={`${index + 1}: ${product.name[lang]}`} />
+          ))}
+        </div>
+        <span>{String(arrivals.length).padStart(2, "0")}</span>
+      </div>
+    </section>
+  );
+}
+
+function ShowcaseProductCard({
+  product,
+  label,
+  lang,
+  decantPrice,
+  onProduct,
+  onFavorite,
+  favoriteFolders,
+}: {
+  product: Product;
+  label: string;
+  lang: Lang;
+  decantPrice?: number;
+  onProduct: (id: string) => void;
+  onFavorite: (product: Product) => void;
+  favoriteFolders: FavoriteFolder[];
+}) {
+  const { endsAt, now } = usePromotionClock(product);
+  const discount = productDiscount(product, now);
+  const currentPrice = productPrice(product);
+  const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
+  const variantPrices = product.variants.map((variant) => variant.isDecant ? variant.price : (discount ? variant.price * (1 - discount / 100) : variant.price));
+  const lowestPrice = decantPrice ?? Math.min(...variantPrices);
+  const highestPrice = Math.max(...variantPrices, currentPrice);
+  const priceLabel = lowestPrice < highestPrice
+    ? `${price(lowestPrice, lang)}–${price(highestPrice, lang)}`
+    : price(currentPrice, lang);
+
+  return (
+    <article className="home-new-card catalog-showcase-card" style={{ "--pack": product.color, "--pack-accent": product.accent } as React.CSSProperties}>
+      <div className="home-new-media-wrap">
+        <button className="home-new-media" onClick={() => onProduct(product.id)} aria-label={product.name[lang]}>
+          {product.tag === "soldout" && <span className="showcase-status-badge">{lang === "pt" ? "Esgotado" : "Sold out"}</span>}
+          {discount > 0 && (
+            <div className="showcase-discount-stack">
+              <span>-{discount}%</span>
+              {endsAt && <small>{formatCountdown(endsAt, now, lang)}</small>}
+            </div>
+          )}
+          <ProductVisual product={product} />
+        </button>
+        <button className={`home-new-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? `Guardar ${product.name.pt} nos favoritos` : `Save ${product.name.en} to favourites`}>
+          <Heart size={18} fill={isFavorite ? "currentColor" : "none"} />
+        </button>
+      </div>
+      <div className="home-new-copy">
+        <span>{label}:</span>
+        <button onClick={() => onProduct(product.id)}>{product.name[lang]}</button>
+        <div className="home-new-rating" aria-label={lang === "pt" ? "Ainda sem avaliações" : "No reviews yet"}><i>☆☆☆☆☆</i><small>(0)</small></div>
+        <strong className={discount > 0 ? "discounted" : ""}>
+          {discount > 0 && <del>{price(product.price, lang)}</del>}
+          <span>{priceLabel}</span>
+        </strong>
+      </div>
+    </article>
+  );
+}
+
+function ScentProfiles({ lang, onProfile }: { lang: Lang; onProfile: (profile: ScentProfile) => void }) {
+  const profiles = lang === "pt" ? [
+    { id: "fresh" as const, icon: Citrus, label: "Frescos e cítricos" },
+    { id: "fruity" as const, icon: Apple, label: "Frutados" },
+    { id: "floral" as const, icon: Flower2, label: "Florais" },
+    { id: "sweet" as const, icon: Cookie, label: "Doces e Gourmand" },
+    { id: "woody" as const, icon: Trees, label: "Amadeirados e especiados" },
+  ] : [
+    { id: "fresh" as const, icon: Citrus, label: "Fresh and citrus" },
+    { id: "fruity" as const, icon: Apple, label: "Fruity" },
+    { id: "floral" as const, icon: Flower2, label: "Floral" },
+    { id: "sweet" as const, icon: Cookie, label: "Sweet" },
+    { id: "woody" as const, icon: Trees, label: "Woody and spicy" },
+  ];
+
+  return (
+    <section className="scent-profile-section">
+      <h2>{lang === "pt" ? "Descobre por perfil olfativo" : "Discover by scent profile"}</h2>
+      <div className="scent-profile-band">
+        <div className="scent-profile-grid">
+          {profiles.map(({ id, icon: Icon, label }) => (
+            <button key={id} onClick={() => onProfile(id)}>
+              <Icon size={30} strokeWidth={1.55} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WhatsAppConsultationBanner() {
+  return (
+    <section className="whatsapp-consultation-banner" aria-label="Aconselhamento personalizado Mystic Essence">
+      <a
+        href="https://wa.me/351938258798?text=Ol%C3%A1%21%20Preciso%20de%20ajuda."
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Falar com a Mystic Essence pelo WhatsApp"
+      >
+        <Image
+          src="/whatsapp-consultation-banner.png"
+          width={1536}
+          height={1024}
+          sizes="(max-width: 620px) 100vw, 94vw"
+          alt="Vamos encontrar a tua melhor essência com aconselhamento personalizado pelo WhatsApp"
+        />
+      </a>
+    </section>
+  );
+}
+
+function StoreStrip({ t }: { t: (typeof COPY)[Lang] }) {
+  return (
+    <section className="store-strip">
+      <div>
+        <span className="eyebrow">Santa Maria da Feira</span>
+        <h2>Loja Mystic Essence</h2>
+      </div>
+      <p>{t.address}</p>
+      <p>{t.phone}</p>
+      <p>{t.hours}</p>
+    </section>
+  );
+}
+
+function BrandBand() {
+  return (
+    <section className="brand-band" aria-label="Featured brands">
+      {BRANDS.slice(0, 12).map((brand) => <span key={brand}>{brand}</span>)}
+    </section>
+  );
+}
+
+function ListingPage({
+  t,
+  lang,
+  kind,
+  profile,
+  products,
+  onProduct,
+  onFavorite,
+  favoriteFolders,
+}: {
+  t: (typeof COPY)[Lang];
+  lang: Lang;
+  kind: ListingKind;
+  profile: ScentProfile | null;
+  products: Product[];
+  onProduct: (id: string) => void;
+  onFavorite: (product: Product) => void;
+  favoriteFolders: FavoriteFolder[];
+}) {
+  const categoryTitles: Partial<Record<ListingKind, Record<Lang, string>>> = {
+    men: { pt: "Perfumes masculinos", en: "Men's fragrances" },
+    women: { pt: "Perfumes femininos", en: "Women's fragrances" },
+    unisex: { pt: "Perfumes unissexo", en: "Unisex fragrances" },
+  };
+  const title = profile
+    ? SCENT_PROFILE_LABELS[lang][profile]
+    : categoryTitles[kind]?.[lang]
+      ?? (kind === "new" ? t.newTitle : kind === "best" ? t.bestTitle : kind === "sale" ? t.saleTitle : kind === "decants" ? t.decantsTitle : t.allTitle);
+  const [openFilter, setOpenFilter] = useState<keyof ListingFilters | null>(null);
+  const [draftFilters, setDraftFilters] = useState<ListingFilters>(EMPTY_LISTING_FILTERS);
+  const [activeFilters, setActiveFilters] = useState<ListingFilters>(EMPTY_LISTING_FILTERS);
+  const [sortBy, setSortBy] = useState<"newest" | "price-asc" | "price-desc">("newest");
+  const availableBrands = useMemo(
+    () => Array.from(new Set(products.map((product) => product.brand))).sort((a, b) => a.localeCompare(b)),
+    [products],
+  );
+  const filteredProducts = useMemo(() => products.filter((product) => {
+    const currentPrice = productPrice(product);
+    const matchesAvailability = activeFilters.availability === "all"
+      || (activeFilters.availability === "stock" ? product.tag !== "soldout" : product.tag === "soldout");
+    const matchesPrice = activeFilters.priceRange === "all"
+      || (activeFilters.priceRange === "under30" && currentPrice < 30)
+      || (activeFilters.priceRange === "30to50" && currentPrice >= 30 && currentPrice <= 50)
+      || (activeFilters.priceRange === "over50" && currentPrice > 50);
+    const matchesBrand = activeFilters.brands.length === 0 || activeFilters.brands.includes(product.brand);
+    const matchesProfile = activeFilters.profiles.length === 0 || activeFilters.profiles.includes(product.scentProfile);
+    return matchesAvailability && matchesPrice && matchesBrand && matchesProfile;
+  }), [products, activeFilters]);
+  const orderedProducts = useMemo(() => [...filteredProducts].sort((a, b) => {
+    if (sortBy === "price-asc") return productPrice(a) - productPrice(b);
+    if (sortBy === "price-desc") return productPrice(b) - productPrice(a);
+    return Number(Boolean(b.imageUrl)) - Number(Boolean(a.imageUrl));
+  }), [filteredProducts, sortBy]);
+  const activeFilterCount = (activeFilters.availability !== "all" ? 1 : 0)
+    + (activeFilters.priceRange !== "all" ? 1 : 0)
+    + activeFilters.brands.length
+    + activeFilters.profiles.length;
+
+  useEffect(() => {
+    setOpenFilter(null);
+    setDraftFilters(EMPTY_LISTING_FILTERS);
+    setActiveFilters(EMPTY_LISTING_FILTERS);
+    setSortBy("newest");
+  }, [kind, profile]);
+
+  const toggleListFilter = <K extends "brands" | "profiles">(key: K, value: ListingFilters[K][number]) => {
+    setDraftFilters((current) => ({
+      ...current,
+      [key]: current[key].includes(value as never)
+        ? current[key].filter((item) => item !== value)
+        : [...current[key], value],
+    }));
+  };
+
+  const filterHeaders: { key: keyof ListingFilters; label: string }[] = [
+    { key: "availability", label: t.filters[0] },
+    { key: "priceRange", label: t.filters[1] },
+    { key: "brands", label: t.filters[2] },
+    { key: "profiles", label: t.filters[3] },
+  ];
+  return (
+    <section className="listing-page">
+      {kind === "decants" && <DecantPromo lang={lang} />}
+      <div className="listing-hero">
+        <p>{lang === "pt" ? "Início" : "Home"} / {title}</p>
+        <span className="eyebrow">{profile ? (lang === "pt" ? "Perfil olfativo" : "Scent profile") : (lang === "pt" ? "Perfumaria Árabe" : "Arabian Perfumery")}</span>
+        <h1>{title}</h1>
+        <small>{filteredProducts.length} {t.products}</small>
+      </div>
+      <div className="listing-toolbar">
+        <span>{activeFilterCount > 0 ? `${activeFilterCount} ${lang === "pt" ? "filtros ativos" : "active filters"}` : ""}</span>
+        <label>{t.sort}<select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)}>
+          <option value="newest">{t.sortValue}</option>
+          <option value="price-asc">{lang === "pt" ? "Preço: mais baixo" : "Price: low to high"}</option>
+          <option value="price-desc">{lang === "pt" ? "Preço: mais alto" : "Price: high to low"}</option>
+        </select></label>
+      </div>
+      <div className="catalog-layout">
+        <aside className="filters">
+          {filterHeaders.map(({ key, label }) => (
+            <div className={`filter-group ${openFilter === key ? "open" : ""}`} key={key}>
+              <button
+                type="button"
+                className="filter-group-trigger"
+                aria-expanded={openFilter === key}
+                onClick={() => setOpenFilter((current) => current === key ? null : key)}
+              >
+                {label}<ChevronDown size={16} />
+              </button>
+              {openFilter === key && (
+                <div className="filter-options">
+                  {key === "availability" && [
+                    ["all", lang === "pt" ? "Todos" : "All"],
+                    ["stock", lang === "pt" ? "Em stock" : "In stock"],
+                    ["soldout", lang === "pt" ? "Esgotados" : "Sold out"],
+                  ].map(([value, optionLabel]) => (
+                    <label key={value}><input type="radio" name="availability" checked={draftFilters.availability === value} onChange={() => setDraftFilters((current) => ({ ...current, availability: value as ListingFilters["availability"] }))} />{optionLabel}</label>
+                  ))}
+                  {key === "priceRange" && [
+                    ["all", lang === "pt" ? "Todos os preços" : "All prices"],
+                    ["under30", lang === "pt" ? "Até 30 €" : "Under €30"],
+                    ["30to50", "30 € - 50 €"],
+                    ["over50", lang === "pt" ? "Mais de 50 €" : "Over €50"],
+                  ].map(([value, optionLabel]) => (
+                    <label key={value}><input type="radio" name="priceRange" checked={draftFilters.priceRange === value} onChange={() => setDraftFilters((current) => ({ ...current, priceRange: value as ListingFilters["priceRange"] }))} />{optionLabel}</label>
+                  ))}
+                  {key === "brands" && availableBrands.map((brand) => (
+                    <label key={brand}><input type="checkbox" checked={draftFilters.brands.includes(brand)} onChange={() => toggleListFilter("brands", brand)} />{brand}</label>
+                  ))}
+                  {key === "profiles" && SCENT_PROFILES.map((scentProfile) => (
+                    <label key={scentProfile}><input type="checkbox" checked={draftFilters.profiles.includes(scentProfile)} onChange={() => toggleListFilter("profiles", scentProfile)} />{SCENT_PROFILE_LABELS[lang][scentProfile]}</label>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          <button type="button" className="filter-submit" onClick={() => setActiveFilters(draftFilters)}>{t.results}</button>
+          <button type="button" className="filter-clear" onClick={() => { setDraftFilters(EMPTY_LISTING_FILTERS); setActiveFilters(EMPTY_LISTING_FILTERS); }}>
+            {lang === "pt" ? "Limpar filtros" : "Clear filters"}
+          </button>
+        </aside>
+        <div className="home-new-grid listing-grid listing-showcase-grid">
+          {orderedProducts.length > 0 ? orderedProducts.map((product) => (
+            <ShowcaseProductCard
+              key={product.id}
+              product={product}
+              label={product.isDecant ? "Decant" : title}
+              lang={lang}
+              onProduct={onProduct}
+              onFavorite={onFavorite}
+              favoriteFolders={favoriteFolders}
+            />
+          )) : <div className="listing-empty"><Search size={28} /><strong>{lang === "pt" ? "Nenhum perfume encontrado" : "No fragrances found"}</strong><p>{lang === "pt" ? "Experimente alterar ou limpar os filtros." : "Try changing or clearing the filters."}</p></div>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DecantPromo({ lang }: { lang: Lang }) {
+  return (
+    <section className="decant-promo decant-promo-image-only" aria-label={lang === "pt" ? "Decants Mystic Essence de 2ml, 5ml e 10ml" : "Mystic Essence 2ml, 5ml and 10ml decants"}>
+      <Image src="/decants-2-5-10.png" width={1536} height={1024} sizes="100vw" alt={lang === "pt" ? "Informação sobre decants Mystic Essence de 2ml, 5ml e 10ml" : "Mystic Essence 2ml, 5ml and 10ml decant information"} />
+    </section>
+  );
+}
+
+function ProductCard({
+  product,
+  lang,
+  t,
+  onProduct,
+  onCart,
+  onFavorite,
+  favoriteFolders,
+  showPromotionCountdown = false,
+}: {
+  product: Product;
+  lang: Lang;
+  t: (typeof COPY)[Lang];
+  onProduct: (id: string) => void;
+  onCart: (product: Product) => void;
+  onFavorite: (product: Product) => void;
+  favoriteFolders: FavoriteFolder[];
+  showPromotionCountdown?: boolean;
+}) {
+  const { endsAt, now } = usePromotionClock(product);
+  const discount = productDiscount(product, now);
+  const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
+  return (
+    <article className="product-card">
+      <div className="product-media-wrap">
+        <button className="product-media" onClick={() => onProduct(product.id)}>
+          {product.tag === "soldout" && <span className="status-badge">{t.soldout}</span>}
+          {product.tag === "new" && <span className="status-badge">{t.newTitle}</span>}
+          {discount > 0 && (
+            <div className={`promotion-badge-stack ${product.tag === "new" || product.tag === "soldout" ? "below-status" : ""}`}>
+              <span className="discount-badge">-{discount}%</span>
+              {showPromotionCountdown && endsAt && <span className="promotion-countdown">{formatCountdown(endsAt, now, lang)}</span>}
+            </div>
+          )}
+          <ProductVisual product={product} />
+        </button>
+        <button className={`favorite-button ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? `Guardar ${product.name.pt} nos favoritos` : `Save ${product.name.en} to favourites`}>
+          <Heart size={19} fill={isFavorite ? "currentColor" : "none"} />
+        </button>
+      </div>
+      <div className="product-card-body">
+        <span>{product.brand}</span>
+        <button onClick={() => onProduct(product.id)}>{product.name[lang]}</button>
+        <strong className={discount ? "sale-price" : ""}>
+          {discount > 0 && <del>{price(product.price, lang)}</del>}
+          {t.from} {price(productPrice(product), lang)}
+        </strong>
+        <div className="card-actions">
+          <button onClick={() => onProduct(product.id)}>{t.details}</button>
+          <button disabled={product.tag === "soldout"} onClick={() => onCart(product)}>{t.add}</button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ProductDetail({
+  t,
+  lang,
+  product,
+  products,
+  onListing,
+  onProduct,
+  onCart,
+  onFavorite,
+  favoriteFolders,
+}: {
+  t: (typeof COPY)[Lang];
+  lang: Lang;
+  product: Product;
+  products: Product[];
+  onListing: (kind: ListingKind) => void;
+  onProduct: (id: string) => void;
+  onCart: (product: Product, quantity?: number) => void;
+  onFavorite: (product: Product) => void;
+  favoriteFolders: FavoriteFolder[];
+}) {
+  const [qty, setQty] = useState(1);
+  const [selectedVolume, setSelectedVolume] = useState(product.volume);
+  const related = products.filter((item) => item.id !== product.id && item.brand !== product.brand).slice(0, 4);
+  const { endsAt, now } = usePromotionClock(product);
+  const discount = productDiscount(product, now);
+  const selectedVariant = product.variants.find((variant) => variant.volume === selectedVolume) ?? product.variants[0];
+  const selectedDiscount = selectedVariant.isDecant ? 0 : discount;
+  const selectedPrice = selectedDiscount ? selectedVariant.price * (1 - selectedDiscount / 100) : selectedVariant.price;
+  const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
+  const hasNotes = [product.notes.top, product.notes.heart, product.notes.base]
+    .some((group) => group.pt.length > 0 || group.en.length > 0);
+
+  useEffect(() => {
+    setSelectedVolume(product.volume);
+    setQty(1);
+  }, [product.id, product.volume]);
+
+  function addSelectedVariant() {
+    const variantId = selectedVariant.volume.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    onCart({
+      ...product,
+      id: `${product.id}--${variantId}`,
+      price: selectedPrice,
+      volume: selectedVariant.volume,
+      variants: [selectedVariant],
+      isDecant: selectedVariant.isDecant,
+      discount: undefined,
+      promotionEndsAt: undefined,
+    }, qty);
+  }
+
+  return (
+    <section className="product-page">
+      <div className="product-detail">
+        <div className="detail-media">
+          <ProductVisual product={product} hero />
+        </div>
+        <div className="detail-info">
+          <span className="eyebrow">{product.brand}</span>
+          <h1>{product.name[lang]}</h1>
+          <strong className="detail-price">{selectedDiscount > 0 && <del>{price(selectedVariant.price, lang)}</del>}{price(selectedPrice, lang)}</strong>
+          {selectedDiscount > 0 && endsAt && (
+            <div className="detail-promotion-timer">
+              <Tag size={17} />
+              <span>{lang === "pt" ? "A promoção termina em" : "Promotion ends in"}</span>
+              <strong>{formatFullCountdown(endsAt, now)}</strong>
+            </div>
+          )}
+          <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
+          <p className={product.tag === "soldout" ? "stock sold" : "stock"}><span />{product.tag === "soldout" ? t.soldout : t.stock}</p>
+          <div className="spec-row">
+            <span>Família olfativa</span>
+            <strong>{product.family[lang]}</strong>
+          </div>
+          <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}</option>)}</select></label>
+          <div className="buy-row">
+            <div className="qty-control" aria-label={t.qty}>
+              <button onClick={() => setQty((value) => Math.max(1, value - 1))}><Minus size={16} /></button>
+              <span>{qty}</span>
+              <button onClick={() => setQty((value) => Math.min(9, value + 1))}><Plus size={16} /></button>
+            </div>
+            <button className="primary-button" disabled={product.tag === "soldout"} onClick={addSelectedVariant}>{t.add}</button>
+            <button className={`detail-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}><Heart size={20} fill={isFavorite ? "currentColor" : "none"} /></button>
+          </div>
+          <div className="trust-panel">
+            <p><ShieldCheck size={18} /><span><strong>100% autêntico</strong>Garantia Mystic Essence</span></p>
+            <p><Truck size={18} /><span><strong>Envio gratuito</strong>A partir de 85 € em Portugal Continental</span></p>
+            <p><Headphones size={18} /><span><strong>Apoio especializado</strong>Estamos disponíveis para ajudar</span></p>
+          </div>
+        </div>
+      </div>
+
+      {hasNotes && <div className="notes-section">
+        <span className="eyebrow">{t.signature}</span>
+        <h2>{t.journey}</h2>
+        <p>{t.journeySub}</p>
+        <div className="notes-grid">
+          <NoteCard title={t.top} notes={product.notes.top[lang]} image="citrus" />
+          <NoteCard title={t.heart} notes={product.notes.heart[lang]} image="herbal" />
+          <NoteCard title={t.base} notes={product.notes.base[lang]} image="woods" />
+        </div>
+      </div>}
+
+      <section className="related-section">
+        <div className="section-head split">
+          <h2>{t.related}</h2>
+          <button className="text-link" onClick={() => onListing("all")}>{t.allTitle}</button>
+        </div>
+        <div className="product-grid">
+          {related.map((item) => (
+            <ProductCard key={item.id} product={item} lang={lang} t={t} onProduct={onProduct} onCart={onCart} onFavorite={onFavorite} favoriteFolders={favoriteFolders} />
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function NoteCard({ title, notes, image }: { title: string; notes: string[]; image: string }) {
+  return (
+    <article className="note-card">
+      <div className={`note-image ${image}`} />
+      <h3>{title}</h3>
+      <ul>
+        {notes.map((note) => <li key={note}>{note}</li>)}
+      </ul>
+    </article>
+  );
+}
+
+function ProductVisual({ product, hero = false, compact = false }: { product: Product; hero?: boolean; compact?: boolean }) {
+  if (product.imageUrl) {
+    return (
+      <div className={`visual product-photo-visual ${hero ? "hero-visual" : ""} ${compact ? "compact" : ""}`}>
+        <img
+          src={product.imageUrl}
+          alt={`${product.name.pt} — ${product.brand}`}
+          loading={hero ? "eager" : "lazy"}
+          decoding="async"
+          fetchPriority={hero ? "high" : "low"}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className={`visual product-image-missing ${hero ? "hero-visual" : ""} ${compact ? "compact" : ""}`}>
+      <img src="/mystic-essence-hero-logo.png" alt="" loading="lazy" decoding="async" />
+      {!compact && <span>Imagem em breve</span>}
+    </div>
+  );
+}
+
+function AccountPage({
+  lang,
+  session,
+  products,
+  orders,
+  favoriteFolders,
+  setFavoriteFolders,
+  onProduct,
+  onSession,
+  onLogout,
+  onShop,
+}: {
+  lang: Lang;
+  session: Session | null;
+  products: Product[];
+  orders: Order[];
+  favoriteFolders: FavoriteFolder[];
+  setFavoriteFolders: Dispatch<SetStateAction<FavoriteFolder[]>>;
+  onProduct: (id: string) => void;
+  onSession: (session: Session) => void;
+  onLogout: () => void;
+  onShop: () => void;
+}) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [folderName, setFolderName] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const copy = lang === "pt" ? {
+    eyebrow: "Área de cliente",
+    login: "Entrar",
+    register: "Criar conta",
+    titleLogin: "Bem-vindo de volta",
+    titleRegister: "Junte-se à Mystic Essence",
+    subtitleLogin: "Entre para acompanhar os seus favoritos e futuras encomendas.",
+    subtitleRegister: "Crie o seu perfil para uma experiência de compra mais simples.",
+    name: "Nome completo",
+    email: "Email",
+    password: "Palavra-passe",
+    google: "Continuar com Google",
+    divider: "ou use o seu email",
+    profile: "A minha conta",
+    hello: "Olá",
+    orders: "Ainda não existem encomendas associadas a esta conta.",
+    shop: "Continuar a comprar",
+    logout: "Terminar sessão",
+  } : {
+    eyebrow: "Customer area",
+    login: "Sign in",
+    register: "Create account",
+    titleLogin: "Welcome back",
+    titleRegister: "Join Mystic Essence",
+    subtitleLogin: "Sign in to follow your favourites and future orders.",
+    subtitleRegister: "Create your profile for a simpler shopping experience.",
+    name: "Full name",
+    email: "Email",
+    password: "Password",
+    google: "Continue with Google",
+    divider: "or use your email",
+    profile: "My account",
+    hello: "Hello",
+    orders: "There are no orders associated with this account yet.",
+    shop: "Continue shopping",
+    logout: "Sign out",
+  };
+
+  async function submitAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") || "").trim().toLowerCase();
+    const password = String(form.get("password") || "");
+    const name = String(form.get("name") || email.split("@")[0] || "Cliente").trim();
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      if (!firebaseEnabled) throw new Error(lang === "pt" ? "A ligação Firebase ainda não está configurada neste ambiente." : "Firebase is not configured in this environment yet.");
+      onSession(mode === "login" ? await loginWithEmail(email, password) : await registerWithEmail(name, email, password));
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível entrar." : "Could not sign in."));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function googleAccount() {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      onSession(await loginWithGoogle());
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível entrar com Google." : "Could not sign in with Google."));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  if (session?.role === "customer") {
+    const customerOrders = orders.filter((order) => order.customer.email.toLowerCase() === session.email.toLowerCase());
+    const favoriteCount = new Set(favoriteFolders.flatMap((folder) => folder.productIds)).size;
+    const createFolder = () => {
+      const name = folderName.trim();
+      if (!name) return;
+      setFavoriteFolders((folders) => [...folders, { id: `folder-${Date.now()}`, name, productIds: [] }]);
+      setFolderName("");
+    };
+    return (
+      <section className="account-hub">
+        <header className="account-hub-header">
+          <div className="account-profile-mark"><User size={28} /></div>
+          <div>
+            <span className="eyebrow">{copy.profile}</span>
+            <h1>{copy.hello}, {session.name}</h1>
+            <p>{session.email}</p>
+          </div>
+          <div className="account-actions">
+            <button className="ghost-button" onClick={onShop}>{copy.shop}</button>
+            <button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button>
+          </div>
+        </header>
+
+        <div className="account-overview">
+          <article><Heart size={20} /><span>{lang === "pt" ? "Favoritos" : "Favourites"}</span><strong>{favoriteCount}</strong></article>
+          <article><ShoppingBag size={20} /><span>{lang === "pt" ? "Encomendas" : "Orders"}</span><strong>{customerOrders.length}</strong></article>
+          <article><Tag size={20} /><span>{lang === "pt" ? "Cupões" : "Coupons"}</span><strong>2</strong></article>
+        </div>
+
+        <div className="account-dashboard-grid">
+          <section className="account-panel favorites-panel">
+            <header><div><Heart size={20} /><div><h2>{lang === "pt" ? "Os meus favoritos" : "My favourites"}</h2><p>{lang === "pt" ? "Organize fragrâncias por marca, ocasião ou estilo." : "Organise fragrances by brand, occasion or style."}</p></div></div></header>
+            <div className="create-folder-bar">
+              <Folder size={18} />
+              <input value={folderName} onChange={(event) => setFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createFolder(); }} placeholder={lang === "pt" ? "Nome da nova pasta (ex.: JPG)" : "New folder name (e.g. JPG)"} />
+              <button onClick={createFolder}><Plus size={16} />{lang === "pt" ? "Criar pasta" : "Create folder"}</button>
+            </div>
+            {favoriteFolders.length === 0 ? (
+              <div className="account-empty-state"><Heart size={24} /><strong>{lang === "pt" ? "Ainda não guardou nenhum perfume" : "You have not saved any perfumes yet"}</strong><p>{lang === "pt" ? "Crie uma pasta e use o coração nos produtos que gosta." : "Create a folder and use the heart on products you love."}</p></div>
+            ) : (
+              <div className="favorite-folder-list">
+                {favoriteFolders.map((folder) => {
+                  const folderProducts = folder.productIds.map((id) => products.find((product) => product.id === id)).filter((product): product is Product => Boolean(product));
+                  return (
+                    <article className="favorite-folder" key={folder.id}>
+                      <header><div><Folder size={17} /><strong>{folder.name}</strong></div><span>{folderProducts.length}</span></header>
+                      {folderProducts.length === 0 ? <p>{lang === "pt" ? "Pasta vazia" : "Empty folder"}</p> : (
+                        <div className="folder-products">
+                          {folderProducts.map((product) => (
+                            <div key={product.id}>
+                              <button className="folder-product" onClick={() => onProduct(product.id)}><ProductVisual product={product} compact /><span><strong>{product.name[lang]}</strong><small>{product.brand}</small></span></button>
+                              <button className="folder-remove" onClick={() => setFavoriteFolders((folders) => folders.map((item) => item.id === folder.id ? { ...item, productIds: item.productIds.filter((id) => id !== product.id) } : item))} aria-label={lang === "pt" ? "Remover da pasta" : "Remove from folder"}><X size={14} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <aside className="account-side-stack">
+            <section className="account-panel coupon-panel">
+              <header><Tag size={19} /><h2>{lang === "pt" ? "Cupões disponíveis" : "Available coupons"}</h2></header>
+              <div className="coupon"><strong>MYSTIC10</strong><span>{lang === "pt" ? "10% na próxima compra" : "10% off your next purchase"}</span></div>
+              <div className="coupon"><strong>ENVIO85</strong><span>{lang === "pt" ? "Envio grátis a partir de 85 €" : "Free shipping from €85"}</span></div>
+            </section>
+            <section className="account-panel order-history-panel">
+              <header><History size={19} /><h2>{lang === "pt" ? "Encomendas e histórico" : "Orders and history"}</h2></header>
+              {customerOrders.length === 0 ? <p className="muted-copy">{copy.orders}</p> : customerOrders.map((order) => {
+                const currentStep = Math.max(0, ORDER_STATUS_SEQUENCE.indexOf(order.status));
+                return (
+                  <article className="customer-order" key={order.id}>
+                    <div className="customer-order-summary">
+                      <div><strong>{order.id}</strong><span>{new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium" }).format(new Date(order.createdAt))}</span></div>
+                      <div><span className={`customer-order-status status-${order.status}`}>{ORDER_STATUS_LABELS[lang][order.status]}</span><strong>{price(order.total, lang)}</strong></div>
+                    </div>
+                    <div className="customer-order-progress" aria-label={`${lang === "pt" ? "Estado" : "Status"}: ${ORDER_STATUS_LABELS[lang][order.status]}`}>
+                      {ORDER_STATUS_SEQUENCE.map((status, index) => (
+                        <span className={index <= currentStep ? "complete" : ""} key={status}><i /><small>{ORDER_STATUS_LABELS[lang][status]}</small></span>
+                      ))}
+                    </div>
+                    {order.trackingNumber && (
+                      <div className="customer-tracking"><Truck size={15} /><span>{lang === "pt" ? "Código de seguimento" : "Tracking number"}</span><strong>{order.trackingNumber}</strong></div>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
+          </aside>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="account-page">
+      <div className="account-intro">
+        <span className="eyebrow">{copy.eyebrow}</span>
+        <h1>{mode === "login" ? copy.titleLogin : copy.titleRegister}</h1>
+        <p>{mode === "login" ? copy.subtitleLogin : copy.subtitleRegister}</p>
+        <div className="account-benefits">
+          <p><Check size={16} />{lang === "pt" ? "Guarde os seus perfumes favoritos" : "Save your favourite perfumes"}</p>
+          <p><Check size={16} />{lang === "pt" ? "Checkout mais rápido" : "Faster checkout"}</p>
+          <p><Check size={16} />{lang === "pt" ? "Histórico de encomendas" : "Order history"}</p>
+        </div>
+      </div>
+
+      <div className="account-form-panel">
+        <div className="auth-tabs" role="tablist">
+          <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>{copy.login}</button>
+          <button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")}>{copy.register}</button>
+        </div>
+        <button className="google-button" onClick={googleAccount} disabled={authBusy}>
+          <span>G</span>{copy.google}
+        </button>
+        <div className="auth-divider"><span>{copy.divider}</span></div>
+        <form className="account-form" onSubmit={submitAccount}>
+          {mode === "register" && <label className="field"><span>{copy.name}</span><input name="name" autoComplete="name" required /></label>}
+          <label className="field"><span>{copy.email}</span><input name="email" type="email" autoComplete="email" required /></label>
+          <label className="field"><span>{copy.password}</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required /></label>
+          <button className="primary-button" type="submit" disabled={authBusy}>{authBusy ? (lang === "pt" ? "Aguarde..." : "Please wait...") : mode === "login" ? copy.login : copy.register}</button>
+        </form>
+        {authError && <p className="auth-error" role="alert">{authError}</p>}
+      </div>
+    </section>
+  );
+}
+
+function FavoritePicker({
+  lang,
+  product,
+  folders,
+  setFolders,
+  onClose,
+  onSaved,
+}: {
+  lang: Lang;
+  product: Product | null;
+  folders: FavoriteFolder[];
+  setFolders: Dispatch<SetStateAction<FavoriteFolder[]>>;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const [name, setName] = useState("");
+  if (!product) return null;
+
+  function toggleFolder(folderId: string) {
+    const isSaved = folders.find((folder) => folder.id === folderId)?.productIds.includes(product!.id);
+    setFolders((items) => items.map((folder) => folder.id === folderId ? {
+      ...folder,
+      productIds: isSaved ? folder.productIds.filter((id) => id !== product!.id) : [...folder.productIds, product!.id],
+    } : folder));
+    onSaved(isSaved ? (lang === "pt" ? "Removido da pasta" : "Removed from folder") : (lang === "pt" ? "Guardado nos favoritos" : "Saved to favourites"));
+  }
+
+  function createFolder() {
+    const folderName = name.trim();
+    if (!folderName) return;
+    setFolders((items) => [...items, { id: `folder-${Date.now()}`, name: folderName, productIds: [product!.id] }]);
+    setName("");
+    onSaved(lang === "pt" ? `Pasta “${folderName}” criada` : `Folder “${folderName}” created`);
+  }
+
+  return (
+    <>
+      <button className="modal-backdrop" onClick={onClose} aria-label={lang === "pt" ? "Fechar favoritos" : "Close favourites"} />
+      <section className="favorite-picker" role="dialog" aria-modal="true" aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}>
+        <header><div><Heart size={20} /><div><span>{lang === "pt" ? "Guardar favorito" : "Save favourite"}</span><h2>{product.name[lang]}</h2></div></div><button onClick={onClose} aria-label="Close"><X size={20} /></button></header>
+        <div className="picker-create">
+          <input value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createFolder(); }} placeholder={lang === "pt" ? "Criar pasta (ex.: JPG)" : "Create folder (e.g. JPG)"} />
+          <button onClick={createFolder}><Plus size={17} />{lang === "pt" ? "Criar" : "Create"}</button>
+        </div>
+        <div className="picker-folders">
+          {folders.length === 0 ? <p>{lang === "pt" ? "Crie a primeira pasta para guardar este perfume." : "Create your first folder to save this perfume."}</p> : folders.map((folder) => {
+            const saved = folder.productIds.includes(product.id);
+            return <button className={saved ? "selected" : ""} key={folder.id} onClick={() => toggleFolder(folder.id)}><Folder size={18} /><span><strong>{folder.name}</strong><small>{folder.productIds.length} {lang === "pt" ? "perfumes" : "perfumes"}</small></span>{saved && <Check size={17} />}</button>;
+          })}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function AdminPage({
+  lang,
+  products,
+  setProducts,
+  orders,
+  setOrders,
+  session,
+  onShop,
+  onLogout,
+}: {
+  lang: Lang;
+  products: Product[];
+  setProducts: Dispatch<SetStateAction<Product[]>>;
+  orders: Order[];
+  setOrders: Dispatch<SetStateAction<Order[]>>;
+  session: Session;
+  onShop: () => void;
+  onLogout: () => void;
+}) {
+  const emptyDraft = () => ({ name: "", brand: "", price: "", volume: "100ml", category: "Unissexo" as Product["category"], scentProfile: "fresh" as ScentProfile, tag: "new" as Product["tag"], bestSeller: false, promotion: false, discount: "", endsAt: toDateTimeInput() });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState(emptyDraft);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [showArchive, setShowArchive] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [trackingDrafts, setTrackingDrafts] = useState<Record<string, string>>({});
+  const [pendingStatuses, setPendingStatuses] = useState<Record<string, OrderStatus>>({});
+  const [adminBusy, setAdminBusy] = useState(false);
+  const copy = lang === "pt" ? {
+    title: "Gestão da loja", store: "Ver loja", logout: "Sair", products: "Produtos", best: "Best sellers", sold: "Esgotados", orders: "Encomendas",
+    add: "Adicionar produto", edit: "Editar produto", name: "Nome", brand: "Marca", price: "Preço", volume: "Tamanho", category: "Categoria", scentProfile: "Perfil olfativo", status: "Estado",
+    save: "Guardar produto", cancel: "Cancelar", inventory: "Inventário", actions: "Ações", remove: "Remover", editAction: "Editar", image: "Imagem do produto", imageHint: "Escolher uma imagem JPG, PNG ou WebP (máx. 5 MB)", promotion: "Criar promoção", bestSellerToggle: "Adicionar aos Best sellers", discount: "Desconto (%)", newPrice: "Novo preço", promotionEnd: "Termina em", seed: "Enviar catálogo para Firebase", tracking: "Número de seguimento", confirmTracking: "Confirmar envio",
+    ordersTitle: "Encomendas recebidas", ordersSub: "Dados de entrega e resumo de cada pedido realizado no mockup.", noOrders: "Ainda não existem encomendas.", noOrdersText: "As encomendas concluídas no checkout vão aparecer aqui.",
+    customer: "Cliente", delivery: "Entrega", payment: "Pagamento", items: "Produtos", notes: "Notas do cliente", orderStatus: "Estado da encomenda",
+    archive: "Arquivo de entregas", backToOrders: "Encomendas ativas", archiveOrder: "Arquivar entrega", restoreOrder: "Repor encomenda",
+    archiveTitle: "Arquivo de entregas", archiveSub: "Histórico das encomendas entregues e arquivadas.", noArchive: "O arquivo está vazio.", noArchiveText: "As entregas arquivadas vão aparecer aqui.",
+    statuses: { received: "Recebida", preparing: "Em preparação", shipped: "Enviada", delivered: "Entregue" },
+  } : {
+    title: "Store management", store: "View store", logout: "Sign out", products: "Products", best: "Best sellers", sold: "Sold out", orders: "Orders",
+    add: "Add product", edit: "Edit product", name: "Name", brand: "Brand", price: "Price", volume: "Size", category: "Category", scentProfile: "Scent profile", status: "Status",
+    save: "Save product", cancel: "Cancel", inventory: "Inventory", actions: "Actions", remove: "Remove", editAction: "Edit", image: "Product image", imageHint: "Choose a JPG, PNG or WebP image (max. 5 MB)", promotion: "Create promotion", bestSellerToggle: "Add to Best sellers", discount: "Discount (%)", newPrice: "New price", promotionEnd: "Ends at", seed: "Upload catalogue to Firebase", tracking: "Tracking number", confirmTracking: "Confirm shipment",
+    ordersTitle: "Received orders", ordersSub: "Delivery details and purchase summary for every mock order.", noOrders: "There are no orders yet.", noOrdersText: "Orders completed at checkout will appear here.",
+    customer: "Customer", delivery: "Delivery", payment: "Payment", items: "Products", notes: "Customer notes", orderStatus: "Order status",
+    archive: "Delivery archive", backToOrders: "Active orders", archiveOrder: "Archive delivery", restoreOrder: "Restore order",
+    archiveTitle: "Delivery archive", archiveSub: "History of delivered and archived orders.", noArchive: "The archive is empty.", noArchiveText: "Archived deliveries will appear here.",
+    statuses: { received: "Received", preparing: "Preparing", shipped: "Shipped", delivered: "Delivered" },
+  };
+  const activeOrders = orders.filter((order) => !order.archived);
+  const archivedOrders = orders.filter((order) => order.archived);
+  const visibleOrders = showArchive ? archivedOrders : activeOrders;
+  const inventoryProducts = products.filter((product) => !product.isDecant);
+
+  function resetEditor() {
+    setEditingId(null);
+    setDraft(emptyDraft());
+    setSelectedImage(null);
+    setEditorOpen(false);
+  }
+
+  function addProduct() {
+    setEditingId(null);
+    setDraft(emptyDraft());
+    setSelectedImage(null);
+    setEditorOpen(true);
+  }
+
+  function editProduct(product: Product) {
+    const discount = productDiscount(product);
+    const endsAt = productPromotionEnd(product);
+    setEditingId(product.id);
+    setDraft({ name: product.name[lang], brand: product.brand, price: String(product.price), volume: product.volume, category: product.category, scentProfile: product.scentProfile, tag: product.tag, bestSeller: Boolean(product.bestSeller), promotion: discount > 0, discount: discount ? String(discount) : "", endsAt: toDateTimeInput(endsAt) });
+    setSelectedImage(null);
+    setEditorOpen(true);
+  }
+
+  async function saveProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const existing = products.find((product) => product.id === editingId);
+    const fallback = existing ?? PRODUCTS[0];
+    const nextId = existing?.id ?? `custom-${Date.now()}`;
+    const basePrice = Math.max(0, Number(draft.price));
+    const fullVariants = existing?.variants.filter((variant) => !variant.isDecant) ?? [];
+    const updatedFullVariants = fullVariants.length > 1
+      ? fullVariants.map((variant, index) => index === 0 ? { ...variant, volume: draft.volume.trim(), price: basePrice } : variant)
+      : [{ volume: draft.volume.trim(), price: basePrice }];
+    const decants = existing?.variants.filter((variant) => variant.isDecant) ?? decantVariants(nextId, basePrice);
+    setAdminBusy(true);
+    let imageData = existing ? { imageUrl: existing.imageUrl, imagePath: existing.imagePath } : {};
+    try {
+      if (selectedImage && firebaseEnabled) imageData = await uploadProductImage(nextId, selectedImage);
+    } catch (error) {
+      setAdminBusy(false);
+      window.alert(error instanceof Error ? error.message : "Não foi possível enviar a imagem.");
+      return;
+    }
+    const nextProduct: Product = {
+      ...fallback,
+      id: nextId,
+      brand: draft.brand.trim(),
+      category: draft.category,
+      scentProfile: draft.scentProfile,
+      audiences: existing && existing.category === draft.category
+        ? existing.audiences
+        : [draft.category === "Masculinos" ? "men" : draft.category === "Femininos" ? "women" : "unisex"],
+      tag: draft.tag,
+      bestSeller: draft.bestSeller,
+      name: { pt: draft.name.trim(), en: draft.name.trim() },
+      price: basePrice,
+      discount: draft.promotion ? Math.min(95, Math.max(1, Number(draft.discount))) : undefined,
+      promotionEndsAt: draft.promotion ? new Date(draft.endsAt).toISOString() : undefined,
+      volume: draft.volume.trim(),
+      variants: [...updatedFullVariants, ...decants],
+      family: existing?.family ?? { pt: "Oriental amadeirado", en: "Oriental woody" },
+      desc: existing?.desc ?? { pt: "Nova fragrância adicionada no mockup de administração.", en: "New fragrance added in the administration mockup." },
+      notes: existing?.notes ?? {
+        top: { pt: ["Especiarias"], en: ["Spices"] },
+        heart: { pt: ["Âmbar"], en: ["Amber"] },
+        base: { pt: ["Madeiras"], en: ["Woods"] },
+      },
+      color: existing?.color ?? "#4d3611",
+      accent: existing?.accent ?? "#d9ae4b",
+      mood: existing?.mood ?? "custom",
+      ...imageData,
+    };
+    setProducts((items) => existing ? items.map((item) => item.id === existing.id ? nextProduct : item) : [nextProduct, ...items]);
+    if (firebaseEnabled) await saveFirebaseProduct(nextProduct.id, nextProduct);
+    setAdminBusy(false);
+    resetEditor();
+  }
+
+  async function deleteProduct(product: Product) {
+    setProducts((items) => items.filter((item) => item.id !== product.id));
+    if (firebaseEnabled) await removeFirebaseProduct(product.id);
+  }
+
+  function changeOrder(orderId: string, changes: Record<string, unknown>) {
+    setOrders((items) => items.map((item) => item.id === orderId ? { ...item, ...changes } as Order : item));
+    if (firebaseEnabled) void updateFirebaseOrder(orderId, { ...changes, updatedAt: new Date().toISOString() });
+  }
+
+  function selectOrderStatus(order: Order, status: OrderStatus) {
+    if (status === "shipped") {
+      setPendingStatuses((items) => ({ ...items, [order.id]: status }));
+      setTrackingDrafts((items) => ({ ...items, [order.id]: items[order.id] ?? order.trackingNumber ?? "" }));
+      return;
+    }
+    setPendingStatuses((items) => ({ ...items, [order.id]: status }));
+    changeOrder(order.id, { status });
+  }
+
+  function confirmShipment(order: Order) {
+    const trackingNumber = (trackingDrafts[order.id] ?? "").trim();
+    if (!trackingNumber) return;
+    changeOrder(order.id, { status: "shipped", trackingNumber });
+    setPendingStatuses((items) => ({ ...items, [order.id]: "shipped" }));
+  }
+
+  return (
+    <section className="admin-page">
+      <header className="admin-heading">
+        <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
+      </header>
+
+      <div className="admin-metrics">
+        <div><Boxes size={20} /><span>{copy.products}</span><strong>{inventoryProducts.length}</strong></div>
+        <div><Sparkles size={20} /><span>{copy.best}</span><strong>{inventoryProducts.filter((product) => product.bestSeller).length}</strong></div>
+        <div><ShoppingBag size={20} /><span>{copy.sold}</span><strong>{inventoryProducts.filter((product) => product.tag === "soldout").length}</strong></div>
+        <div><ClipboardList size={20} /><span>{copy.orders}</span><strong>{activeOrders.length}</strong></div>
+      </div>
+
+      <div className="admin-workspace">
+        <div className="admin-inventory">
+          <div className="admin-inventory-title">
+            <div><LayoutDashboard size={19} /><h2>{copy.inventory}</h2></div>
+            <div className="admin-inventory-actions">
+              {firebaseEnabled && <button onClick={() => void seedProducts(INITIAL_PRODUCTS)} disabled={adminBusy}><Boxes size={17} />{copy.seed}</button>}
+              <button onClick={addProduct}><PackagePlus size={17} />{copy.add}</button>
+            </div>
+          </div>
+          <div className="admin-product-list">
+            {inventoryProducts.map((product) => (
+              <article className="admin-product-row" key={product.id}>
+                <ProductVisual product={product} compact />
+                <div className="admin-product-name"><strong>{product.name[lang]}</strong><span>{product.brand} · {product.volume} · {SCENT_PROFILE_LABELS[lang][product.scentProfile]}</span></div>
+                <span className={`admin-status ${product.tag}`}>
+                  {product.tag === "new" ? (lang === "pt" ? "Novo" : "New") : product.tag === "stock" ? (lang === "pt" ? "Em stock" : "In stock") : (lang === "pt" ? "Esgotado" : "Sold out")}
+                </span>
+                <strong>{productDiscount(product) > 0 ? price(productPrice(product), lang) : price(product.price, lang)}</strong>
+                <div className="admin-row-actions" aria-label={copy.actions}>
+                  <button onClick={() => editProduct(product)} aria-label={`${copy.editAction} ${product.name[lang]}`} title={copy.editAction}><Pencil size={15} /></button>
+                  <button onClick={() => void deleteProduct(product)} aria-label={`${copy.remove} ${product.name[lang]}`} title={copy.remove}><Trash2 size={15} /></button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {editorOpen && (
+        <>
+          <button className="modal-backdrop" onClick={resetEditor} aria-label={copy.cancel} />
+          <form className="admin-editor admin-editor-modal" onSubmit={saveProduct} role="dialog" aria-modal="true">
+          <header><div><span className="eyebrow">{editingId ? copy.edit : copy.add}</span><h2>{editingId ? draft.name : copy.add}</h2></div><button type="button" onClick={resetEditor} aria-label={copy.cancel}><X size={20} /></button></header>
+          <label className="admin-image-drop">
+            <Camera size={28} />
+            <span><strong>{selectedImage?.name ?? copy.image}</strong><small>{copy.imageHint}</small></span>
+            <input type="file" accept="image/jpeg,image/png,image/webp" disabled={!storageEnabled} onChange={(event) => setSelectedImage(event.target.files?.[0] ?? null)} />
+          </label>
+          <label className="field"><span>{copy.name}</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label>
+          <label className="field"><span>{copy.brand}</span><input value={draft.brand} onChange={(event) => setDraft({ ...draft, brand: event.target.value })} required /></label>
+          <div className="admin-field-row">
+            <label className={`field ${draft.promotion ? "locked-field" : ""}`}><span>{copy.price}</span><input type="number" min="0" step="0.01" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} disabled={draft.promotion} required /></label>
+            <label className="field"><span>{copy.volume}</span><input value={draft.volume} onChange={(event) => setDraft({ ...draft, volume: event.target.value })} required /></label>
+          </div>
+          <label className="promotion-toggle">
+            <input type="checkbox" checked={draft.promotion} onChange={(event) => setDraft({ ...draft, promotion: event.target.checked, discount: event.target.checked ? (draft.discount || "10") : "", endsAt: event.target.checked ? (draft.endsAt || toDateTimeInput()) : draft.endsAt })} />
+            <span><Check size={14} />{copy.promotion}</span>
+          </label>
+          {draft.promotion && (
+            <div className="admin-field-row promotion-fields">
+              <label className="field"><span>{copy.discount}</span><input type="number" min="1" max="95" step="1" value={draft.discount} onChange={(event) => setDraft({ ...draft, discount: event.target.value })} required /></label>
+              <label className="field output-field"><span>{copy.newPrice}</span><input value={price(Math.max(0, Number(draft.price)) * (1 - Math.min(95, Math.max(0, Number(draft.discount))) / 100), lang)} readOnly /></label>
+              <label className="field promotion-end-field"><span>{copy.promotionEnd}</span><input type="datetime-local" min={toDateTimeInput(new Date().toISOString())} value={draft.endsAt} onChange={(event) => setDraft({ ...draft, endsAt: event.target.value })} required /></label>
+            </div>
+          )}
+          <div className="admin-field-row">
+            <label className="field"><span>{copy.category}</span><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value as Product["category"] })}><option>Masculinos</option><option>Femininos</option><option>Unissexo</option></select></label>
+            <label className="field"><span>{copy.status}</span><select value={draft.tag} onChange={(event) => setDraft({ ...draft, tag: event.target.value as Product["tag"] })}><option value="stock">{lang === "pt" ? "Em stock" : "In stock"}</option><option value="new">{lang === "pt" ? "Novidade" : "New"}</option><option value="soldout">{lang === "pt" ? "Esgotado" : "Sold out"}</option></select></label>
+          </div>
+          <label className="field"><span>{copy.scentProfile}</span><select value={draft.scentProfile} onChange={(event) => setDraft({ ...draft, scentProfile: event.target.value as ScentProfile })}>{SCENT_PROFILES.map((profile) => <option key={profile} value={profile}>{SCENT_PROFILE_LABELS[lang][profile]}</option>)}</select></label>
+          <label className="promotion-toggle best-seller-toggle">
+            <input type="checkbox" checked={draft.bestSeller} onChange={(event) => setDraft({ ...draft, bestSeller: event.target.checked })} />
+            <span><Check size={14} />{copy.bestSellerToggle}</span>
+          </label>
+          <button className="primary-button" type="submit" disabled={adminBusy}><Save size={16} />{adminBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : copy.save}</button>
+          <button className="admin-cancel" type="button" onClick={resetEditor}>{copy.cancel}</button>
+          </form>
+        </>
+      )}
+
+      <section className="admin-orders">
+        <header className="admin-orders-heading">
+          <div>{showArchive ? <Archive size={21} /> : <ClipboardList size={21} />}<div><h2>{showArchive ? copy.archiveTitle : copy.ordersTitle}</h2><p>{showArchive ? copy.archiveSub : copy.ordersSub}</p></div></div>
+          <div className="admin-orders-actions">
+            <span>{visibleOrders.length}</span>
+            <button type="button" onClick={() => setShowArchive((current) => !current)}>
+              {showArchive ? <ClipboardList size={16} /> : <Archive size={16} />}
+              {showArchive ? copy.backToOrders : copy.archive}
+            </button>
+          </div>
+        </header>
+
+        {visibleOrders.length === 0 ? (
+          <div className="admin-orders-empty">
+            {showArchive ? <Archive size={28} /> : <ClipboardList size={28} />}
+            <strong>{showArchive ? copy.noArchive : copy.noOrders}</strong>
+            <p>{showArchive ? copy.noArchiveText : copy.noOrdersText}</p>
+          </div>
+        ) : (
+          <div className="admin-order-list">
+            {visibleOrders.map((order) => (
+              <article className="admin-order-card" key={order.id}>
+                <header className="admin-order-header">
+                  <div>
+                    <span className="admin-order-id">{order.id}</span>
+                    <time dateTime={order.createdAt}>{new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(order.createdAt))}</time>
+                  </div>
+                  <strong>{price(order.total, lang)}</strong>
+                  <div className="admin-order-controls">
+                    {showArchive ? (
+                      <>
+                        <span className="admin-archived-status"><Check size={15} />{copy.statuses.delivered}</span>
+                        <button className="admin-restore-order" type="button" onClick={() => changeOrder(order.id, { archived: false })}><ArchiveRestore size={15} />{copy.restoreOrder}</button>
+                      </>
+                    ) : (
+                      <>
+                        <label className="admin-order-status">
+                          <span>{copy.orderStatus}</span>
+                          <select value={pendingStatuses[order.id] ?? order.status} onChange={(event) => selectOrderStatus(order, event.target.value as OrderStatus)}>
+                            {(Object.keys(copy.statuses) as OrderStatus[]).map((status) => <option value={status} key={status}>{copy.statuses[status]}</option>)}
+                          </select>
+                        </label>
+                        {(pendingStatuses[order.id] ?? order.status) === "shipped" && (
+                          <div className="admin-tracking-form">
+                            <input value={trackingDrafts[order.id] ?? order.trackingNumber ?? ""} onChange={(event) => setTrackingDrafts((items) => ({ ...items, [order.id]: event.target.value }))} placeholder={copy.tracking} aria-label={copy.tracking} />
+                            <button type="button" onClick={() => confirmShipment(order)} disabled={!(trackingDrafts[order.id] ?? order.trackingNumber ?? "").trim()}><Truck size={15} />{copy.confirmTracking}</button>
+                          </div>
+                        )}
+                        {order.status === "delivered" && <button className="admin-archive-order" type="button" onClick={() => changeOrder(order.id, { archived: true })}><Check size={16} />{copy.archiveOrder}</button>}
+                      </>
+                    )}
+                  </div>
+                </header>
+
+                <div className="admin-order-details">
+                  <section>
+                    <h3>{copy.customer}</h3>
+                    <p><User size={15} /><strong>{order.customer.name}</strong></p>
+                    <p><Mail size={15} /><a href={`mailto:${order.customer.email}`}>{order.customer.email}</a></p>
+                    <p><Phone size={15} /><a href={`tel:${order.customer.phone}`}>{order.customer.phone}</a></p>
+                  </section>
+                  <section>
+                    <h3>{copy.delivery}</h3>
+                    <p className="admin-address"><MapPin size={15} /><span>{order.customer.address}<br />{order.customer.postal} {order.customer.city}</span></p>
+                  </section>
+                  <section>
+                    <h3>{copy.payment}</h3>
+                    <p><CreditCard size={15} /><strong>{order.payment === "mbway" ? "MB WAY" : order.payment === "apple" ? "Apple Pay" : "Visa"}</strong></p>
+                    <div className="admin-order-totals">
+                      <span>{lang === "pt" ? "Subtotal" : "Subtotal"}<strong>{price(order.subtotal, lang)}</strong></span>
+                      <span>{lang === "pt" ? "Envio" : "Shipping"}<strong>{order.shipping === 0 ? (lang === "pt" ? "Grátis" : "Free") : price(order.shipping, lang)}</strong></span>
+                    </div>
+                  </section>
+                </div>
+
+                <div className="admin-order-products">
+                  <h3>{copy.items}</h3>
+                  {order.items.map((item) => (
+                    <div key={item.id}><span>{item.qty} × {item.name[lang]} <small>{item.volume}</small></span><strong>{price(item.price * item.qty, lang)}</strong></div>
+                  ))}
+                </div>
+
+                {order.customer.notes && <div className="admin-order-notes"><strong>{copy.notes}</strong><p>{order.customer.notes}</p></div>}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function CheckoutPage({
+  t,
+  lang,
+  cart,
+  onCreateOrder,
+  onBack,
+}: {
+  t: (typeof COPY)[Lang];
+  lang: Lang;
+  cart: CartItem[];
+  onCreateOrder: (order: Order) => void;
+  onBack: () => void;
+}) {
+  const [payment, setPayment] = useState<PaymentMethod>("mbway");
+  const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const shipping = subtotal >= 85 ? 0 : 4.9;
+  const total = subtotal + shipping;
+  const copy = t.checkoutPage;
+
+  async function submitOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const createdAt = new Date().toISOString();
+    const order: Order = {
+      id: `ME-${createdAt.replace(/\D/g, "").slice(-8)}`,
+      createdAt,
+      customer: {
+        name: String(form.get("name") ?? "").trim(),
+        email: String(form.get("email") ?? "").trim(),
+        phone: String(form.get("phone") ?? "").trim(),
+        address: String(form.get("address") ?? "").trim(),
+        postal: String(form.get("postal") ?? "").trim(),
+        city: String(form.get("city") ?? "").trim(),
+        notes: String(form.get("notes") ?? "").trim(),
+      },
+      items: cart.map((item) => ({ id: item.id, name: item.name, brand: item.brand, volume: item.volume, price: item.price, qty: item.qty, imageUrl: item.imageUrl })),
+      subtotal,
+      shipping,
+      total,
+      payment,
+      status: "received",
+      archived: false,
+    };
+    setCheckoutBusy(true);
+    setCheckoutError("");
+    try {
+      if (firebaseEnabled) {
+        const payload = {
+          lang,
+          paymentMethod: payment,
+          customer: order.customer,
+          items: cart.map((item) => ({ productId: item.id, volume: item.volume, quantity: item.qty })),
+        };
+        if (paymentsEnabled) {
+          const result = await createCheckout(payload);
+          window.location.assign(result.paymentUrl);
+          return;
+        }
+        const result = await createPendingOrder(payload);
+        const pendingOrder = { ...order, id: result.orderId };
+        onCreateOrder(pendingOrder);
+        setSubmittedOrder(pendingOrder);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      onCreateOrder(order);
+      setSubmittedOrder(order);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setCheckoutError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível iniciar o pagamento." : "Could not start payment."));
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  if (submittedOrder) {
+    return (
+      <section className="checkout-success">
+        <BadgeCheck size={52} />
+        <span className="eyebrow">Mystic Essence</span>
+        <h1>{copy.successTitle}</h1>
+        <p>{copy.successText}</p>
+        <span className="success-reference">{lang === "pt" ? "Referência" : "Reference"}: {submittedOrder.id}</span>
+        <div className="success-total"><span>{copy.total}</span><strong>{price(submittedOrder.total, lang)}</strong></div>
+        <button className="primary-button" onClick={onBack}>{copy.continue}</button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="checkout-page">
+      <button className="checkout-back" onClick={onBack}><ArrowLeft size={17} />{copy.back}</button>
+      <header className="checkout-heading">
+        <span className="eyebrow">{copy.eyebrow}</span>
+        <h1>{copy.title}</h1>
+      </header>
+
+      <form className="checkout-layout" onSubmit={submitOrder}>
+        <div className="checkout-form">
+          <section className="checkout-section">
+            <h2>{copy.contactTitle}</h2>
+            <div className="form-grid">
+              <label className="field full"><span>{copy.name}</span><input name="name" autoComplete="name" required /></label>
+              <label className="field"><span>{copy.email}</span><input name="email" type="email" autoComplete="email" required /></label>
+              <label className="field"><span>{copy.phone}</span><input name="phone" type="tel" inputMode="tel" autoComplete="tel" required /></label>
+            </div>
+          </section>
+
+          <section className="checkout-section">
+            <h2>{copy.deliveryTitle}</h2>
+            <div className="form-grid">
+              <label className="field full"><span>{copy.address}</span><input name="address" autoComplete="street-address" required /></label>
+              <label className="field"><span>{copy.postal}</span><input name="postal" inputMode="numeric" autoComplete="postal-code" placeholder="4520-248" required /></label>
+              <label className="field"><span>{copy.city}</span><input name="city" autoComplete="address-level2" required /></label>
+              <label className="field full"><span>{copy.notes}</span><textarea name="notes" rows={3} /></label>
+            </div>
+          </section>
+
+          <section className="checkout-section payment-section">
+            <h2>{copy.paymentTitle}</h2>
+            <div className="payment-options" role="radiogroup" aria-label={copy.paymentTitle}>
+              <button type="button" className={payment === "mbway" ? "active" : ""} onClick={() => setPayment("mbway")} aria-pressed={payment === "mbway"}>
+                <Smartphone size={20} /><span><strong>MB WAY</strong><small>{lang === "pt" ? "Pagamento pelo telemóvel" : "Mobile payment"}</small></span>
+              </button>
+              <button type="button" className={payment === "apple" ? "active" : ""} onClick={() => setPayment("apple")} aria-pressed={payment === "apple"}>
+                <WalletCards size={20} /><span><strong>Apple Pay</strong><small>{lang === "pt" ? "Confirmação no dispositivo" : "Confirm on your device"}</small></span>
+              </button>
+              <button type="button" className={payment === "visa" ? "active" : ""} onClick={() => setPayment("visa")} aria-pressed={payment === "visa"}>
+                <CreditCard size={20} /><span><strong>Visa</strong><small>{lang === "pt" ? "Cartão de crédito ou débito" : "Credit or debit card"}</small></span>
+              </button>
+            </div>
+
+            <p className="payment-note"><LockKeyhole size={16} />{paymentsEnabled
+              ? (lang === "pt"
+                  ? "O pagamento abre numa página segura do parceiro de pagamentos. A Mystic Essence nunca recebe os dados do seu cartão."
+                  : "Payment opens on the payment partner's secure page. Mystic Essence never receives your card details.")
+              : (lang === "pt"
+                  ? "A encomenda será registada como pendente. Não será efetuado qualquer pagamento durante esta fase de testes."
+                  : "The order will be registered as pending. No payment will be taken during this testing phase.")}</p>
+          </section>
+        </div>
+
+        <aside className="order-summary">
+          <h2>{copy.order}</h2>
+          <div className="checkout-items">
+            {cart.map((item) => (
+              <div className="checkout-item" key={item.id}>
+                <ProductVisual product={item} compact />
+                <div><strong>{item.name[lang]}</strong><span>{item.volume} · {t.qty}: {item.qty}</span></div>
+                <b>{price(item.price * item.qty, lang)}</b>
+              </div>
+            ))}
+          </div>
+          <div className="summary-lines">
+            <p><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>
+            <p><span>{copy.shipping}</span><strong>{shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
+            <p className="summary-total"><span>{copy.total}</span><strong>{price(total, lang)}</strong></p>
+          </div>
+          {checkoutError && <p className="auth-error" role="alert">{checkoutError}</p>}
+          <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
+          <p className="secure-note"><LockKeyhole size={14} />{copy.secure}</p>
+        </aside>
+      </form>
+    </section>
+  );
+}
+
+function CartDrawer({
+  t,
+  lang,
+  open,
+  cart,
+  onClose,
+  onUpdate,
+  onRemove,
+  onCheckout,
+}: {
+  t: (typeof COPY)[Lang];
+  lang: Lang;
+  open: boolean;
+  cart: CartItem[];
+  onClose: () => void;
+  onUpdate: (id: string, qty: number) => void;
+  onRemove: (id: string) => void;
+  onCheckout: () => void;
+}) {
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  return (
+    <>
+      <button className={`drawer-backdrop ${open ? "visible" : ""}`} onClick={onClose} aria-label="Close cart backdrop" />
+      <aside className={`cart-drawer ${open ? "open" : ""}`} aria-hidden={!open}>
+        <header>
+          <h2>{t.cart}</h2>
+          <button onClick={onClose} aria-label="Close cart"><X size={22} /></button>
+        </header>
+        {cart.length === 0 ? (
+          <div className="empty-cart">
+            <ShoppingBag size={34} />
+            <p>{t.empty}</p>
+            <span>{t.emptySub}</span>
+          </div>
+        ) : (
+          <>
+            <div className="cart-items">
+              {cart.map((item) => (
+                <article key={item.id} className="cart-item">
+                  <ProductVisual product={item} compact />
+                  <div>
+                    <strong>{item.name[lang]}</strong>
+                    <span>{item.volume} · {price(item.price, lang)}</span>
+                    <div className="cart-line">
+                      <div className="qty-control small">
+                        <button onClick={() => onUpdate(item.id, Math.max(1, item.qty - 1))}><Minus size={13} /></button>
+                        <span>{item.qty}</span>
+                        <button onClick={() => onUpdate(item.id, Math.min(9, item.qty + 1))}><Plus size={13} /></button>
+                      </div>
+                      <button className="remove-button" onClick={() => onRemove(item.id)}>{t.remove}</button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <footer>
+              <p><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>
+              <button className="primary-button" onClick={onCheckout}>{t.checkout}</button>
+              <small>{t.mockOnly}</small>
+            </footer>
+          </>
+        )}
+      </aside>
+    </>
+  );
+}
+
+function Footer({ t }: { t: (typeof COPY)[Lang] }) {
+  return (
+    <footer className="footer">
+      <div className="footer-grid">
+        <div>
+          <Image src="/mystic-essence-logo.png" width={174} height={174} alt="Mystic Essence" />
+          <p>{t.footerTag}</p>
+          <div className="socials">
+            <a href="https://www.instagram.com/_mystic.essence_/" target="_blank" rel="noreferrer" aria-label="Instagram Mystic Essence"><Camera size={18} /></a>
+            <a href="https://www.tiktok.com/@_mystic.essence_" target="_blank" rel="noreferrer" aria-label="TikTok Mystic Essence"><Music2 size={18} /></a>
+          </div>
+        </div>
+        <div>
+          <span>{t.contact}</span>
+          <h3>Contactos</h3>
+          <p>{t.address}</p>
+          <p>{t.phone}</p>
+          <p>{t.hours}</p>
+        </div>
+        <div>
+          <span>{t.legal}</span>
+          <Link href="/#termos">Termos e Condições</Link>
+          <Link href="/#privacidade">Política de Privacidade</Link>
+          <Link href="/#cookies">Política de Cookies</Link>
+          <Link href="/#devolucoes">Política de Devoluções</Link>
+          <Link href="/#reclamacoes">Livro de Reclamações</Link>
+        </div>
+      </div>
+      <div className="footer-bottom">© 2026 Mystic Essence. {t.rights}</div>
+    </footer>
+  );
+}
