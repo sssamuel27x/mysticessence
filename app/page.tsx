@@ -2006,6 +2006,8 @@ function ProductDetail({
   const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
   const hasNotes = [product.notes.top, product.notes.heart, product.notes.base]
     .some((group) => group.pt.length > 0 || group.en.length > 0);
+  const isDecant = selectedVariant.isDecant;
+  const displayFamily = product.family[lang];
 
   useEffect(() => {
     setSelectedVolume(product.volume);
@@ -2029,40 +2031,75 @@ function ProductDetail({
   return (
     <section className="product-page">
       <div className="product-detail">
-        <div className="detail-media">
-          <ProductVisual product={product} hero />
+        <div className="detail-gallery">
+          <div className="detail-gallery-frame">
+            <ProductVisual product={product} hero />
+            <div className="detail-gallery-glow" />
+          </div>
+          <div className="detail-gallery-caption">
+            <span>{product.brand}</span>
+            <strong>{isDecant ? "Decant Mystic Essence" : "Fragrância original"}</strong>
+          </div>
         </div>
+
         <div className="detail-info">
-          <span className="eyebrow">{product.brand}</span>
-          <h1>{product.name[lang]}</h1>
-          <strong className="detail-price">{selectedDiscount > 0 && <del>{price(selectedVariant.price, lang)}</del>}{price(selectedPrice, lang)}</strong>
-          {selectedDiscount > 0 && endsAt && (
-            <div className="detail-promotion-timer">
-              <Tag size={17} />
-              <span>{lang === "pt" ? "A promoção termina em" : "Promotion ends in"}</span>
-              <strong>{formatFullCountdown(endsAt, now)}</strong>
+          <div className="detail-title-block">
+            <span className="eyebrow">{product.brand}</span>
+            <h1>{product.name[lang]}</h1>
+            <div className="detail-meta-strip">
+              <span><BadgeCheck size={15} /> Original</span>
+              <span><Sparkles size={15} /> {displayFamily}</span>
+              <span><ShoppingBag size={15} /> {selectedVolume}</span>
             </div>
-          )}
-          <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
-          <p className={product.tag === "soldout" ? "stock sold" : "stock"}><span />{product.tag === "soldout" ? t.soldout : t.stock}</p>
-          <div className="spec-row">
-            <span>Família olfativa</span>
-            <strong>{product.family[lang]}</strong>
           </div>
-          <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}</option>)}</select></label>
-          <div className="buy-row">
-            <div className="qty-control" aria-label={t.qty}>
-              <button onClick={() => setQty((value) => Math.max(1, value - 1))}><Minus size={16} /></button>
-              <span>{qty}</span>
-              <button onClick={() => setQty((value) => Math.min(9, value + 1))}><Plus size={16} /></button>
+
+          <div className="detail-purchase-card">
+            <div className="detail-price-line">
+              <div>
+                <span>{lang === "pt" ? "Preço" : "Price"}</span>
+                <strong className="detail-price">{selectedDiscount > 0 && <del>{price(selectedVariant.price, lang)}</del>}{price(selectedPrice, lang)}</strong>
+              </div>
+              <p className={product.tag === "soldout" ? "stock sold" : "stock"}><span />{product.tag === "soldout" ? t.soldout : t.stock}</p>
             </div>
-            <button className="primary-button" disabled={product.tag === "soldout"} onClick={addSelectedVariant}>{t.add}</button>
-            <button className={`detail-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}><Heart size={20} fill={isFavorite ? "currentColor" : "none"} /></button>
+
+            {selectedDiscount > 0 && endsAt && (
+              <div className="detail-promotion-timer">
+                <Tag size={17} />
+                <span>{lang === "pt" ? "A promoção termina em" : "Promotion ends in"}</span>
+                <strong>{formatFullCountdown(endsAt, now)}</strong>
+              </div>
+            )}
+
+            <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
+
+            <div className="detail-fragrance-card">
+              <span>Família olfativa</span>
+              <strong>{displayFamily}</strong>
+              <small>{hasNotes ? "Pirâmide olfativa detalhada mais abaixo." : "Informação olfativa brevemente disponível."}</small>
+            </div>
+
+            <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}</option>)}</select></label>
+
+            <div className="buy-row">
+              <div className="qty-control" aria-label={t.qty}>
+                <button onClick={() => setQty((value) => Math.max(1, value - 1))}><Minus size={16} /></button>
+                <span>{qty}</span>
+                <button onClick={() => setQty((value) => Math.min(9, value + 1))}><Plus size={16} /></button>
+              </div>
+              <button className="primary-button" disabled={product.tag === "soldout"} onClick={addSelectedVariant}>{t.add}</button>
+              <button className={`detail-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}><Heart size={20} fill={isFavorite ? "currentColor" : "none"} /></button>
+            </div>
           </div>
+
           <div className="trust-panel">
             <p><ShieldCheck size={18} /><span><strong>100% autêntico</strong>Garantia Mystic Essence</span></p>
             <p><Truck size={18} /><span><strong>Envio gratuito</strong>A partir de 85 € em Portugal Continental</span></p>
             <p><Headphones size={18} /><span><strong>Apoio especializado</strong>Estamos disponíveis para ajudar</span></p>
+          </div>
+
+          <div className="detail-service-note">
+            <MessageCircle size={18} />
+            <span>Precisas de ajuda a escolher? A Mystic Essence recomenda a fragrância certa para o teu estilo.</span>
           </div>
         </div>
       </div>
