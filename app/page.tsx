@@ -2007,7 +2007,6 @@ function ProductDetail({
   const hasNotes = [product.notes.top, product.notes.heart, product.notes.base]
     .some((group) => group.pt.length > 0 || group.en.length > 0);
   const isDecant = selectedVariant.isDecant;
-  const displayFamily = product.family[lang];
 
   useEffect(() => {
     setSelectedVolume(product.volume);
@@ -2048,7 +2047,6 @@ function ProductDetail({
             <h1>{product.name[lang]}</h1>
             <div className="detail-meta-strip">
               <span><BadgeCheck size={15} /> Original</span>
-              <span><Sparkles size={15} /> {displayFamily}</span>
               <span><ShoppingBag size={15} /> {selectedVolume}</span>
             </div>
           </div>
@@ -2071,12 +2069,6 @@ function ProductDetail({
             )}
 
             <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
-
-            <div className="detail-fragrance-card">
-              <span>Família olfativa</span>
-              <strong>{displayFamily}</strong>
-              {hasNotes && <small>Pirâmide olfativa detalhada mais abaixo.</small>}
-            </div>
 
             <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}</option>)}</select></label>
 
