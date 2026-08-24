@@ -14,15 +14,21 @@ import {
   loginWithGoogle,
   logoutFirebase,
   registerWithEmail,
+  removeCoupon as removeFirebaseCoupon,
   removeProduct as removeFirebaseProduct,
+  saveCoupon as saveFirebaseCoupon,
   saveFavoriteFolders,
   saveProduct as saveFirebaseProduct,
   seedProducts,
+  submitReview as submitFirebaseReview,
   updateOrder as updateFirebaseOrder,
   uploadProductImage,
+  validateCoupon,
+  watchCoupons,
   watchFavoriteFolders,
   watchOrders,
   watchProducts,
+  watchReviews,
   watchSession,
 } from "./firebase";
 import {
@@ -65,7 +71,9 @@ import {
   ShoppingBag,
   Smartphone,
   Sparkles,
+  Star,
   Tag,
+  TicketPercent,
   Phone,
   Trash2,
   Truck,
@@ -88,6 +96,8 @@ type ProductVariant = {
   volume: string;
   price: number;
   isDecant?: boolean;
+  soldout?: boolean;
+  stock?: number;
 };
 
 type Product = {
@@ -203,8 +213,10 @@ function inferScentProfile(seed: CatalogSeed): ScentProfile {
 }
 
 type CartItem = Product & { qty: number };
+const MAX_ORDER_QUANTITY = 99;
 type OrderItem = {
   id: string;
+  productId?: string;
   name: Record<Lang, string>;
   brand: string;
   volume: string;
@@ -212,7 +224,18 @@ type OrderItem = {
   qty: number;
   imageUrl?: string;
 };
+type ProductReview = {
+  id: string;
+  productId: string;
+  rating: number;
+  comment: string;
+  customerName: string;
+  verifiedPurchase: boolean;
+  createdAt: string;
+  updatedAt?: string;
+};
 type FavoriteFolder = { id: string; name: string; productIds: string[] };
+type Coupon = { id: string; code: string; discount: number; createdAt: string };
 type Order = {
   id: string;
   createdAt: string;
@@ -223,11 +246,21 @@ type Order = {
     address: string;
     postal: string;
     city: string;
+    taxId?: string;
     notes: string;
+  };
+  billing?: {
+    sameAsContact: boolean;
+    name: string;
+    address: string;
+    taxId: string;
   };
   items: OrderItem[];
   subtotal: number;
   shipping: number;
+  couponCode?: string;
+  discount?: number;
+  discountAmount?: number;
   total: number;
   customerUid?: string | null;
   payment: PaymentMethod | "ifthenpay";
@@ -302,11 +335,17 @@ const COPY = {
       title: "Finalizar compra",
       back: "Voltar às compras",
       contactTitle: "Dados de contacto",
+      billingTitle: "Dados de faturação",
       deliveryTitle: "Morada de entrega",
       paymentTitle: "Método de pagamento",
       name: "Nome completo",
       email: "Email",
       phone: "Número de telefone",
+      taxId: "NIF (opcional)",
+      sameBilling: "Dados de contacto iguais aos de faturação",
+      billingName: "Nome de faturação",
+      billingAddress: "Morada de faturação",
+      billingTaxId: "NIF",
       address: "Morada",
       postal: "Código postal",
       city: "Localidade",
@@ -316,6 +355,12 @@ const COPY = {
       expiry: "MM/AA",
       cvc: "CVC",
       order: "Resumo da encomenda",
+      promoCode: "Código promocional",
+      promoPlaceholder: "Introduza o código",
+      promoApply: "Aplicar",
+      promoApplied: "Cupão aplicado",
+      promoInvalid: "Cupão inválido ou inexistente.",
+      discount: "Desconto",
       shipping: "Envio",
       free: "Grátis",
       total: "Total",
@@ -385,11 +430,17 @@ const COPY = {
       title: "Complete your order",
       back: "Back to shopping",
       contactTitle: "Contact details",
+      billingTitle: "Billing details",
       deliveryTitle: "Delivery address",
       paymentTitle: "Payment method",
       name: "Full name",
       email: "Email",
       phone: "Phone number",
+      taxId: "Tax number (optional)",
+      sameBilling: "Contact details are the same as billing details",
+      billingName: "Billing name",
+      billingAddress: "Billing address",
+      billingTaxId: "Tax number",
       address: "Address",
       postal: "Postcode",
       city: "City",
@@ -399,6 +450,12 @@ const COPY = {
       expiry: "MM/YY",
       cvc: "CVC",
       order: "Order summary",
+      promoCode: "Promotional code",
+      promoPlaceholder: "Enter your code",
+      promoApply: "Apply",
+      promoApplied: "Coupon applied",
+      promoInvalid: "Invalid or unknown coupon.",
+      discount: "Discount",
       shipping: "Shipping",
       free: "Free",
       total: "Total",
@@ -712,11 +769,11 @@ const PRODUCTS: Product[] = CATALOG.filter((seed) => seed.id !== "yara-50").map(
   };
 });
 
-const DECANT_PRODUCTS: Product[] = PRODUCTS.flatMap((product) => {
+function asDecantProduct(product: Product): Product | null {
   const variants = product.variants.filter((variant) => variant.isDecant);
-  const firstVariant = variants[0];
-  if (!firstVariant) return [];
-  return [{
+  const firstVariant = variants.find((variant) => !variant.soldout) ?? variants[0];
+  if (!firstVariant) return null;
+  return {
     ...product,
     id: `decant-${product.id}`,
     name: {
@@ -726,10 +783,15 @@ const DECANT_PRODUCTS: Product[] = PRODUCTS.flatMap((product) => {
     price: firstVariant.price,
     volume: firstVariant.volume,
     variants,
-    tag: "stock" as const,
+    tag: variants.every((variant) => variant.soldout) ? "soldout" : "stock",
     bestSeller: false,
     isDecant: true,
-  }];
+  };
+}
+
+const DECANT_PRODUCTS: Product[] = PRODUCTS.flatMap((product) => {
+  const decantProduct = asDecantProduct(product);
+  return decantProduct ? [decantProduct] : [];
 });
 
 const INITIAL_PRODUCTS = [...PRODUCTS, ...DECANT_PRODUCTS];
@@ -771,6 +833,10 @@ function productSet(products: Product[], kind: ListingKind) {
 
 function productsForProfile(products: Product[], profile: ScentProfile) {
   return products.filter((product) => !product.isDecant && product.scentProfile === profile);
+}
+
+function canonicalProductId(productId: string) {
+  return productId.replace(/^decant-/, "").split("--")[0];
 }
 
 function productPromotionEnd(product: Product) {
@@ -842,6 +908,7 @@ export default function Home() {
   const [catalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
   const [session, setSession] = useState<Session | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [favoriteFolders, setFavoriteFolders] = useState<FavoriteFolder[]>([]);
   const [favoriteProductId, setFavoriteProductId] = useState<string | null>(null);
   const [pendingFavoriteId, setPendingFavoriteId] = useState<string | null>(null);
@@ -921,6 +988,11 @@ export default function Home() {
   }, [session]);
 
   useEffect(() => {
+    if (!session || session.role !== "admin" || !firebaseEnabled) return;
+    return watchCoupons<Coupon>(setCoupons);
+  }, [session]);
+
+  useEffect(() => {
     if (!session || session.role !== "customer" || !firebaseEnabled) return;
     return watchFavoriteFolders<FavoriteFolder>(session.uid, (folders) => {
       remoteFavorites.current = JSON.stringify(folders);
@@ -974,12 +1046,15 @@ export default function Home() {
   }
 
   function addToCart(product: Product, quantity = 1) {
-    if (product.tag === "soldout") return;
-    const amount = Math.min(9, Math.max(1, quantity));
+    const selectedVariant = product.variants.find((variant) => variant.volume === product.volume) ?? product.variants[0];
+    const stockLimit = typeof selectedVariant?.stock === "number" ? Math.max(0, selectedVariant.stock) : MAX_ORDER_QUANTITY;
+    const isUnavailable = stockLimit === 0 || Boolean(selectedVariant?.soldout) || (!selectedVariant?.isDecant && product.tag === "soldout");
+    if (isUnavailable) return;
+    const amount = Math.min(MAX_ORDER_QUANTITY, stockLimit, Math.max(1, quantity));
     setCart((items) => {
       const existing = items.find((item) => item.id === product.id);
       if (existing) {
-        return items.map((item) => (item.id === product.id ? { ...item, qty: Math.min(9, item.qty + amount) } : item));
+        return items.map((item) => (item.id === product.id ? { ...item, qty: Math.min(MAX_ORDER_QUANTITY, stockLimit, item.qty + amount) } : item));
       }
       return [...items, { ...product, price: productPrice(product), qty: amount }];
     });
@@ -987,7 +1062,11 @@ export default function Home() {
   }
 
   function updateQty(id: string, qty: number) {
-    setCart((items) => items.map((item) => (item.id === id ? { ...item, qty } : item)));
+    setCart((items) => items.map((item) => {
+      if (item.id !== id) return item;
+      const stockLimit = typeof item.variants[0]?.stock === "number" ? Math.max(1, item.variants[0].stock) : MAX_ORDER_QUANTITY;
+      return { ...item, qty: Math.min(stockLimit, Math.max(1, qty)) };
+    }));
   }
 
   function removeItem(id: string) {
@@ -1069,6 +1148,9 @@ export default function Home() {
             onCart={addToCart}
             onFavorite={openFavorite}
             favoriteFolders={favoriteFolders}
+            session={session}
+            orders={orders}
+            onLogin={() => navigate("/conta", { view: "account", listing, profileFilter })}
           />
         )}
 
@@ -1077,6 +1159,7 @@ export default function Home() {
             t={t}
             lang={lang}
             cart={cart}
+            coupons={coupons}
             onCreateOrder={(order) => {
               setOrders((items) => [order, ...items]);
               setCart([]);
@@ -1118,6 +1201,8 @@ export default function Home() {
             setProducts={setCatalog}
             orders={orders}
             setOrders={setOrders}
+            coupons={coupons}
+            setCoupons={setCoupons}
             session={session}
             onShop={openHome}
             onLogout={() => {
@@ -1940,11 +2025,13 @@ function ProductCard({
   const { endsAt, now } = usePromotionClock(product);
   const discount = productDiscount(product, now);
   const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
+  const primaryVariant = product.variants.find((variant) => variant.volume === product.volume) ?? product.variants[0];
+  const productUnavailable = Boolean(primaryVariant?.soldout) || primaryVariant?.stock === 0 || (!primaryVariant?.isDecant && product.tag === "soldout");
   return (
     <article className="product-card">
       <div className="product-media-wrap">
         <button className="product-media" onClick={() => onProduct(product.id)}>
-          {product.tag === "soldout" && <span className="status-badge">{t.soldout}</span>}
+          {productUnavailable && <span className="status-badge">{t.soldout}</span>}
           {product.tag === "new" && <span className="status-badge">{t.newTitle}</span>}
           {discount > 0 && (
             <div className={`promotion-badge-stack ${product.tag === "new" || product.tag === "soldout" ? "below-status" : ""}`}>
@@ -1967,7 +2054,7 @@ function ProductCard({
         </strong>
         <div className="card-actions">
           <button onClick={() => onProduct(product.id)}>{t.details}</button>
-          <button disabled={product.tag === "soldout"} onClick={() => onCart(product)}>{t.add}</button>
+          <button disabled={productUnavailable} onClick={() => onCart(product)}>{t.add}</button>
         </div>
       </div>
     </article>
@@ -1984,6 +2071,9 @@ function ProductDetail({
   onCart,
   onFavorite,
   favoriteFolders,
+  session,
+  orders,
+  onLogin,
 }: {
   t: (typeof COPY)[Lang];
   lang: Lang;
@@ -1994,6 +2084,9 @@ function ProductDetail({
   onCart: (product: Product, quantity?: number) => void;
   onFavorite: (product: Product) => void;
   favoriteFolders: FavoriteFolder[];
+  session: Session | null;
+  orders: Order[];
+  onLogin: () => void;
 }) {
   const [qty, setQty] = useState(1);
   const [selectedVolume, setSelectedVolume] = useState(product.volume);
@@ -2003,6 +2096,9 @@ function ProductDetail({
   const selectedVariant = product.variants.find((variant) => variant.volume === selectedVolume) ?? product.variants[0];
   const selectedDiscount = selectedVariant.isDecant ? 0 : discount;
   const selectedPrice = selectedDiscount ? selectedVariant.price * (1 - selectedDiscount / 100) : selectedVariant.price;
+  const selectedStock = typeof selectedVariant.stock === "number" ? Math.max(0, selectedVariant.stock) : null;
+  const selectedSoldOut = selectedStock === 0 || Boolean(selectedVariant.soldout) || (!selectedVariant.isDecant && product.tag === "soldout");
+  const maximumQuantity = selectedStock === null ? MAX_ORDER_QUANTITY : Math.max(1, Math.min(MAX_ORDER_QUANTITY, selectedStock));
   const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
   const hasNotes = [product.notes.top, product.notes.heart, product.notes.base]
     .some((group) => group.pt.length > 0 || group.en.length > 0);
@@ -2013,7 +2109,12 @@ function ProductDetail({
     setQty(1);
   }, [product.id, product.volume]);
 
+  useEffect(() => {
+    setQty((value) => Math.min(value, maximumQuantity));
+  }, [selectedVolume, maximumQuantity]);
+
   function addSelectedVariant() {
+    if (selectedSoldOut) return;
     const variantId = selectedVariant.volume.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     onCart({
       ...product,
@@ -2057,7 +2158,7 @@ function ProductDetail({
                 <span>{lang === "pt" ? "Preço" : "Price"}</span>
                 <strong className="detail-price">{selectedDiscount > 0 && <del>{price(selectedVariant.price, lang)}</del>}{price(selectedPrice, lang)}</strong>
               </div>
-              <p className={product.tag === "soldout" ? "stock sold" : "stock"}><span />{product.tag === "soldout" ? t.soldout : t.stock}</p>
+              <p className={selectedSoldOut ? "stock sold" : "stock"}><span />{selectedSoldOut ? t.soldout : selectedStock === null ? t.stock : `${selectedStock} ${lang === "pt" ? "em stock" : "in stock"}`}</p>
             </div>
 
             {selectedDiscount > 0 && endsAt && (
@@ -2070,15 +2171,18 @@ function ProductDetail({
 
             <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
 
-            <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}</option>)}</select></label>
+            <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => {
+              const unavailable = variant.stock === 0 || Boolean(variant.soldout) || (!variant.isDecant && product.tag === "soldout");
+              return <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}{unavailable ? ` · ${t.soldout}` : ""}</option>;
+            })}</select></label>
 
             <div className="buy-row">
               <div className="qty-control" aria-label={t.qty}>
                 <button onClick={() => setQty((value) => Math.max(1, value - 1))}><Minus size={16} /></button>
                 <span>{qty}</span>
-                <button onClick={() => setQty((value) => Math.min(9, value + 1))}><Plus size={16} /></button>
+                <button disabled={selectedSoldOut || qty >= maximumQuantity} onClick={() => setQty((value) => Math.min(maximumQuantity, value + 1))}><Plus size={16} /></button>
               </div>
-              <button className="add-to-cart-signature" disabled={product.tag === "soldout"} onClick={addSelectedVariant}>
+              <button className="add-to-cart-signature" disabled={selectedSoldOut} onClick={addSelectedVariant}>
                 <span>{t.add}</span>
                 <ShoppingBag size={20} />
               </button>
@@ -2110,6 +2214,8 @@ function ProductDetail({
         </div>
       </div>}
 
+      <ProductReviews product={product} lang={lang} session={session} orders={orders} onLogin={onLogin} />
+
       <section className="related-section">
         <div className="section-head split">
           <h2>{t.related}</h2>
@@ -2123,6 +2229,138 @@ function ProductDetail({
       </section>
     </section>
   );
+}
+
+function ProductReviews({
+  product,
+  lang,
+  session,
+  orders,
+  onLogin,
+}: {
+  product: Product;
+  lang: Lang;
+  session: Session | null;
+  orders: Order[];
+  onLogin: () => void;
+}) {
+  const productId = canonicalProductId(product.id);
+  const [reviews, setReviews] = useState<ProductReview[]>([]);
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewMessage, setReviewMessage] = useState("");
+  const [reviewError, setReviewError] = useState("");
+  const canReview = session?.role === "customer" && orders.some((order) => (
+    order.status === "delivered"
+    && order.customerUid === session.uid
+    && order.items.some((item) => canonicalProductId(item.productId ?? item.id) === productId)
+  ));
+  const average = reviews.length
+    ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
+    : 0;
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    return watchReviews<ProductReview>(productId, setReviews);
+  }, [productId]);
+
+  async function publishReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setReviewError("");
+    setReviewMessage("");
+    if (!session) {
+      onLogin();
+      return;
+    }
+    if (!canReview) {
+      setReviewError(lang === "pt"
+        ? "Só pode avaliar este perfume depois de a sua encomenda aparecer como entregue."
+        : "You can only review this perfume after your order is marked as delivered.");
+      return;
+    }
+    if (!rating) {
+      setReviewError(lang === "pt" ? "Escolha o número de estrelas." : "Choose a star rating.");
+      return;
+    }
+    if (comment.trim().length < 10) {
+      setReviewError(lang === "pt" ? "Escreva um comentário com pelo menos 10 caracteres." : "Write a comment with at least 10 characters.");
+      return;
+    }
+    setReviewBusy(true);
+    try {
+      await submitFirebaseReview({ productId, rating, comment: comment.trim() });
+      setComment("");
+      setRating(0);
+      setReviewMessage(lang === "pt" ? "Avaliação publicada. Obrigado!" : "Review published. Thank you!");
+    } catch (error) {
+      const fallback = lang === "pt" ? "Não foi possível publicar a avaliação." : "The review could not be published.";
+      setReviewError(error instanceof Error ? error.message.replace(/^FirebaseError:\s*/i, "") : fallback);
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
+  return (
+    <section className="reviews-section" aria-labelledby="reviews-title">
+      <header className="reviews-heading">
+        <div>
+          <span className="eyebrow">{lang === "pt" ? "Opiniões verificadas" : "Verified opinions"}</span>
+          <h2 id="reviews-title">{lang === "pt" ? "Avaliações de clientes" : "Customer reviews"}</h2>
+          <p>{lang === "pt" ? "Só clientes que receberam este produto podem deixar uma avaliação." : "Only customers who received this product can leave a review."}</p>
+        </div>
+        <div className="reviews-summary" aria-label={lang === "pt" ? `Classificação média ${average.toFixed(1)} em 5` : `Average rating ${average.toFixed(1)} out of 5`}>
+          <strong>{reviews.length ? average.toFixed(1).replace(".", ",") : "—"}</strong>
+          <div><ReviewStars rating={Math.round(average)} /><span>{reviews.length} {lang === "pt" ? (reviews.length === 1 ? "avaliação" : "avaliações") : (reviews.length === 1 ? "review" : "reviews")}</span></div>
+        </div>
+      </header>
+
+      <div className="reviews-layout">
+        <div className="reviews-list">
+          {reviews.length === 0 ? (
+            <div className="reviews-empty"><MessageCircle size={25} /><strong>{lang === "pt" ? "Ainda não existem avaliações" : "There are no reviews yet"}</strong><p>{lang === "pt" ? "A primeira opinião verificada pode ser a sua." : "The first verified opinion could be yours."}</p></div>
+          ) : reviews.map((review) => (
+            <article className="review-card" key={review.id}>
+              <header>
+                <div className="review-avatar" aria-hidden="true">{review.customerName.slice(0, 1).toUpperCase()}</div>
+                <div><strong>{review.customerName}</strong><span><BadgeCheck size={14} />{lang === "pt" ? "Compra verificada" : "Verified purchase"}</span></div>
+                <time dateTime={review.createdAt}>{new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium" }).format(new Date(review.createdAt))}</time>
+              </header>
+              <ReviewStars rating={review.rating} />
+              <p>{review.comment}</p>
+            </article>
+          ))}
+        </div>
+
+        <div className="review-compose">
+          <span className="eyebrow">{lang === "pt" ? "Partilhe a experiência" : "Share your experience"}</span>
+          <h3>{lang === "pt" ? "Avaliar este perfume" : "Review this perfume"}</h3>
+          {!session ? (
+            <div className="review-gate"><LockKeyhole size={20} /><p>{lang === "pt" ? "Inicie sessão para verificarmos se já recebeu este produto." : "Sign in so we can verify that you received this product."}</p><button type="button" onClick={onLogin}>{lang === "pt" ? "Entrar na conta" : "Sign in"}</button></div>
+          ) : !canReview ? (
+            <div className="review-gate"><Truck size={20} /><p>{lang === "pt" ? "A avaliação fica disponível quando uma encomenda com este produto estiver marcada como entregue." : "Reviewing becomes available when an order containing this product is marked as delivered."}</p></div>
+          ) : (
+            <form className="review-form" onSubmit={publishReview}>
+              <fieldset>
+                <legend>{lang === "pt" ? "A sua classificação" : "Your rating"}</legend>
+                <div className="review-star-picker">
+                  {[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" className={value <= rating ? "selected" : ""} onClick={() => setRating(value)} aria-label={`${value} ${lang === "pt" ? (value === 1 ? "estrela" : "estrelas") : (value === 1 ? "star" : "stars")}`} aria-pressed={value <= rating}><Star size={25} fill={value <= rating ? "currentColor" : "none"} /></button>)}
+                </div>
+              </fieldset>
+              <label>{lang === "pt" ? "O seu comentário" : "Your comment"}<textarea value={comment} onChange={(event) => setComment(event.target.value)} minLength={10} maxLength={1000} rows={5} placeholder={lang === "pt" ? "Conte como foi a fragrância, a projeção e a duração..." : "Tell us about the fragrance, projection and longevity..."} /></label>
+              <div className="review-form-footer"><small>{comment.length}/1000</small><button type="submit" disabled={reviewBusy}>{reviewBusy ? (lang === "pt" ? "A publicar..." : "Publishing...") : (lang === "pt" ? "Publicar avaliação" : "Publish review")}</button></div>
+            </form>
+          )}
+          {reviewError && <p className="review-feedback error" role="alert">{reviewError}</p>}
+          {reviewMessage && <p className="review-feedback success" role="status">{reviewMessage}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewStars({ rating }: { rating: number }) {
+  return <div className="review-stars" aria-hidden="true">{[1, 2, 3, 4, 5].map((value) => <Star key={value} size={17} fill={value <= rating ? "currentColor" : "none"} />)}</div>;
 }
 
 function NoteCard({ title, notes, image }: { title: string; notes: string[]; image: string }) {
@@ -2447,6 +2685,8 @@ function AdminPage({
   setProducts,
   orders,
   setOrders,
+  coupons,
+  setCoupons,
   session,
   onShop,
   onLogout,
@@ -2456,11 +2696,13 @@ function AdminPage({
   setProducts: Dispatch<SetStateAction<Product[]>>;
   orders: Order[];
   setOrders: Dispatch<SetStateAction<Order[]>>;
+  coupons: Coupon[];
+  setCoupons: Dispatch<SetStateAction<Coupon[]>>;
   session: Session;
   onShop: () => void;
   onLogout: () => void;
 }) {
-  const emptyDraft = () => ({ name: "", brand: "", price: "", volume: "100ml", category: "Unissexo" as Product["category"], scentProfile: "fresh" as ScentProfile, tag: "new" as Product["tag"], bestSeller: false, promotion: false, discount: "", endsAt: toDateTimeInput() });
+  const emptyDraft = () => ({ name: "", brand: "", price: "", volume: "100ml", category: "Unissexo" as Product["category"], scentProfile: "fresh" as ScentProfile, tag: "new" as Product["tag"], bestSeller: false, promotion: false, discount: "", endsAt: toDateTimeInput(), variantSoldOut: {} as Record<string, boolean>, variantStock: {} as Record<string, string> });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -2469,23 +2711,29 @@ function AdminPage({
   const [trackingDrafts, setTrackingDrafts] = useState<Record<string, string>>({});
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, OrderStatus>>({});
   const [adminBusy, setAdminBusy] = useState(false);
+  const [couponOpen, setCouponOpen] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [couponDiscount, setCouponDiscount] = useState("10");
+  const [couponError, setCouponError] = useState("");
   const copy = lang === "pt" ? {
     title: "Gestão da loja", store: "Ver loja", logout: "Sair", products: "Produtos", best: "Best sellers", sold: "Esgotados", orders: "Encomendas",
-    add: "Adicionar produto", edit: "Editar produto", name: "Nome", brand: "Marca", price: "Preço", volume: "Tamanho", category: "Categoria", scentProfile: "Perfil olfativo", status: "Estado",
+    add: "Adicionar produto", edit: "Editar produto", name: "Nome", brand: "Marca", price: "Preço", volume: "Tamanho", category: "Categoria", scentProfile: "Perfil olfativo", status: "Estado", variantStock: "Stock por tamanho", stockQuantity: "Quantidade", stockUndefined: "Ilimitado", stockHelp: "Deixe a quantidade vazia para manter stock ilimitado.", fullSize: "Frasco inteiro", decant: "Decant", variantSoldOut: "Esgotado",
     save: "Guardar produto", cancel: "Cancelar", inventory: "Inventário", actions: "Ações", remove: "Remover", editAction: "Editar", image: "Imagem do produto", imageHint: "Escolher uma imagem JPG, PNG ou WebP (máx. 5 MB)", promotion: "Criar promoção", bestSellerToggle: "Adicionar aos Best sellers", discount: "Desconto (%)", newPrice: "Novo preço", promotionEnd: "Termina em", seed: "Enviar catálogo para Firebase", tracking: "Número de seguimento", confirmTracking: "Confirmar envio",
     ordersTitle: "Encomendas recebidas", ordersSub: "Dados de entrega e resumo de cada pedido realizado no mockup.", noOrders: "Ainda não existem encomendas.", noOrdersText: "As encomendas concluídas no checkout vão aparecer aqui.",
     customer: "Cliente", delivery: "Entrega", payment: "Pagamento", items: "Produtos", notes: "Notas do cliente", orderStatus: "Estado da encomenda",
     archive: "Arquivo de entregas", backToOrders: "Encomendas ativas", archiveOrder: "Arquivar entrega", restoreOrder: "Repor encomenda",
     archiveTitle: "Arquivo de entregas", archiveSub: "Histórico das encomendas entregues e arquivadas.", noArchive: "O arquivo está vazio.", noArchiveText: "As entregas arquivadas vão aparecer aqui.",
+    coupon: "Criar Cupão", couponTitle: "Gerir cupões", couponCode: "Código do cupão", couponDiscount: "Desconto (%)", couponCreate: "Criar cupão", couponEmpty: "Ainda não existem cupões.", couponRemove: "Remover cupão",
     statuses: { received: "Recebida", preparing: "Em preparação", shipped: "Enviada", delivered: "Entregue" },
   } : {
     title: "Store management", store: "View store", logout: "Sign out", products: "Products", best: "Best sellers", sold: "Sold out", orders: "Orders",
-    add: "Add product", edit: "Edit product", name: "Name", brand: "Brand", price: "Price", volume: "Size", category: "Category", scentProfile: "Scent profile", status: "Status",
+    add: "Add product", edit: "Edit product", name: "Name", brand: "Brand", price: "Price", volume: "Size", category: "Category", scentProfile: "Scent profile", status: "Status", variantStock: "Stock by size", stockQuantity: "Quantity", stockUndefined: "Unlimited", stockHelp: "Leave the quantity empty to keep unlimited stock.", fullSize: "Full bottle", decant: "Decant", variantSoldOut: "Sold out",
     save: "Save product", cancel: "Cancel", inventory: "Inventory", actions: "Actions", remove: "Remove", editAction: "Edit", image: "Product image", imageHint: "Choose a JPG, PNG or WebP image (max. 5 MB)", promotion: "Create promotion", bestSellerToggle: "Add to Best sellers", discount: "Discount (%)", newPrice: "New price", promotionEnd: "Ends at", seed: "Upload catalogue to Firebase", tracking: "Tracking number", confirmTracking: "Confirm shipment",
     ordersTitle: "Received orders", ordersSub: "Delivery details and purchase summary for every mock order.", noOrders: "There are no orders yet.", noOrdersText: "Orders completed at checkout will appear here.",
     customer: "Customer", delivery: "Delivery", payment: "Payment", items: "Products", notes: "Customer notes", orderStatus: "Order status",
     archive: "Delivery archive", backToOrders: "Active orders", archiveOrder: "Archive delivery", restoreOrder: "Restore order",
     archiveTitle: "Delivery archive", archiveSub: "History of delivered and archived orders.", noArchive: "The archive is empty.", noArchiveText: "Archived deliveries will appear here.",
+    coupon: "Create coupon", couponTitle: "Manage coupons", couponCode: "Coupon code", couponDiscount: "Discount (%)", couponCreate: "Create coupon", couponEmpty: "There are no coupons yet.", couponRemove: "Remove coupon",
     statuses: { received: "Received", preparing: "Preparing", shipped: "Shipped", delivered: "Delivered" },
   };
   const activeOrders = orders.filter((order) => !order.archived);
@@ -2511,7 +2759,7 @@ function AdminPage({
     const discount = productDiscount(product);
     const endsAt = productPromotionEnd(product);
     setEditingId(product.id);
-    setDraft({ name: product.name[lang], brand: product.brand, price: String(product.price), volume: product.volume, category: product.category, scentProfile: product.scentProfile, tag: product.tag, bestSeller: Boolean(product.bestSeller), promotion: discount > 0, discount: discount ? String(discount) : "", endsAt: toDateTimeInput(endsAt) });
+    setDraft({ name: product.name[lang], brand: product.brand, price: String(product.price), volume: product.volume, category: product.category, scentProfile: product.scentProfile, tag: product.tag, bestSeller: Boolean(product.bestSeller), promotion: discount > 0, discount: discount ? String(discount) : "", endsAt: toDateTimeInput(endsAt), variantSoldOut: Object.fromEntries(product.variants.map((variant) => [variant.volume, Boolean(variant.soldout)])), variantStock: Object.fromEntries(product.variants.map((variant) => [variant.volume, typeof variant.stock === "number" ? String(variant.stock) : ""])) });
     setSelectedImage(null);
     setEditorOpen(true);
   }
@@ -2527,48 +2775,72 @@ function AdminPage({
       ? fullVariants.map((variant, index) => index === 0 ? { ...variant, volume: draft.volume.trim(), price: basePrice } : variant)
       : [{ volume: draft.volume.trim(), price: basePrice }];
     const decants = existing?.variants.filter((variant) => variant.isDecant) ?? decantVariants(nextId, basePrice);
+    const updatedVariants = [...updatedFullVariants, ...decants].map((variant) => {
+      const stockValue = draft.variantStock[variant.volume];
+      const stock = stockValue === undefined || stockValue.trim() === "" ? undefined : Math.max(0, Math.trunc(Number(stockValue) || 0));
+      return {
+        ...variant,
+        stock,
+        soldout: stock === 0 || (draft.variantSoldOut[variant.volume] ?? Boolean(variant.soldout)),
+      };
+    });
     setAdminBusy(true);
     let imageData = existing ? { imageUrl: existing.imageUrl, imagePath: existing.imagePath } : {};
     try {
       if (selectedImage && firebaseEnabled) imageData = await uploadProductImage(nextId, selectedImage);
+      const nextProduct: Product = {
+        ...fallback,
+        id: nextId,
+        brand: draft.brand.trim(),
+        category: draft.category,
+        scentProfile: draft.scentProfile,
+        audiences: existing && existing.category === draft.category
+          ? existing.audiences
+          : [draft.category === "Masculinos" ? "men" : draft.category === "Femininos" ? "women" : "unisex"],
+        tag: draft.tag,
+        bestSeller: draft.bestSeller,
+        name: { pt: draft.name.trim(), en: draft.name.trim() },
+        price: basePrice,
+        discount: draft.promotion ? Math.min(95, Math.max(1, Number(draft.discount))) : undefined,
+        promotionEndsAt: draft.promotion ? new Date(draft.endsAt).toISOString() : undefined,
+        volume: draft.volume.trim(),
+        variants: updatedVariants,
+        family: existing?.family ?? { pt: "Oriental amadeirado", en: "Oriental woody" },
+        desc: existing?.desc ?? { pt: "Nova fragrância adicionada no mockup de administração.", en: "New fragrance added in the administration mockup." },
+        notes: existing?.notes ?? {
+          top: { pt: ["Especiarias"], en: ["Spices"] },
+          heart: { pt: ["Âmbar"], en: ["Amber"] },
+          base: { pt: ["Madeiras"], en: ["Woods"] },
+        },
+        color: existing?.color ?? "#4d3611",
+        accent: existing?.accent ?? "#d9ae4b",
+        mood: existing?.mood ?? "custom",
+        ...imageData,
+      };
+      const nextDecantProduct = asDecantProduct(nextProduct);
+
+      if (firebaseEnabled) {
+        const saves = [saveFirebaseProduct(nextProduct.id, nextProduct)];
+        if (nextDecantProduct) saves.push(saveFirebaseProduct(nextDecantProduct.id, nextDecantProduct));
+        await Promise.race([
+          Promise.all(saves),
+          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error(lang === "pt" ? "A Firebase demorou demasiado a responder. Tente novamente." : "Firebase took too long to respond. Please try again.")), 8000)),
+        ]);
+      }
+
+      setProducts((items) => {
+        if (!existing) return nextDecantProduct ? [nextProduct, nextDecantProduct, ...items] : [nextProduct, ...items];
+        const decantId = `decant-${existing.id}`;
+        const hasDecantEntry = items.some((item) => item.id === decantId);
+        const updatedItems = items.map((item) => item.id === existing.id ? nextProduct : item.id === decantId && nextDecantProduct ? nextDecantProduct : item);
+        return nextDecantProduct && !hasDecantEntry ? [...updatedItems, nextDecantProduct] : updatedItems;
+      });
+      resetEditor();
     } catch (error) {
+      window.alert(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível guardar o produto." : "The product could not be saved."));
+    } finally {
       setAdminBusy(false);
-      window.alert(error instanceof Error ? error.message : "Não foi possível enviar a imagem.");
-      return;
     }
-    const nextProduct: Product = {
-      ...fallback,
-      id: nextId,
-      brand: draft.brand.trim(),
-      category: draft.category,
-      scentProfile: draft.scentProfile,
-      audiences: existing && existing.category === draft.category
-        ? existing.audiences
-        : [draft.category === "Masculinos" ? "men" : draft.category === "Femininos" ? "women" : "unisex"],
-      tag: draft.tag,
-      bestSeller: draft.bestSeller,
-      name: { pt: draft.name.trim(), en: draft.name.trim() },
-      price: basePrice,
-      discount: draft.promotion ? Math.min(95, Math.max(1, Number(draft.discount))) : undefined,
-      promotionEndsAt: draft.promotion ? new Date(draft.endsAt).toISOString() : undefined,
-      volume: draft.volume.trim(),
-      variants: [...updatedFullVariants, ...decants],
-      family: existing?.family ?? { pt: "Oriental amadeirado", en: "Oriental woody" },
-      desc: existing?.desc ?? { pt: "Nova fragrância adicionada no mockup de administração.", en: "New fragrance added in the administration mockup." },
-      notes: existing?.notes ?? {
-        top: { pt: ["Especiarias"], en: ["Spices"] },
-        heart: { pt: ["Âmbar"], en: ["Amber"] },
-        base: { pt: ["Madeiras"], en: ["Woods"] },
-      },
-      color: existing?.color ?? "#4d3611",
-      accent: existing?.accent ?? "#d9ae4b",
-      mood: existing?.mood ?? "custom",
-      ...imageData,
-    };
-    setProducts((items) => existing ? items.map((item) => item.id === existing.id ? nextProduct : item) : [nextProduct, ...items]);
-    if (firebaseEnabled) await saveFirebaseProduct(nextProduct.id, nextProduct);
-    setAdminBusy(false);
-    resetEditor();
   }
 
   async function deleteProduct(product: Product) {
@@ -2598,11 +2870,40 @@ function AdminPage({
     setPendingStatuses((items) => ({ ...items, [order.id]: "shipped" }));
   }
 
+  async function createCoupon(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const code = couponCode.trim().toUpperCase();
+    const discount = Math.trunc(Number(couponDiscount));
+    if (!/^[A-Z0-9_-]{3,30}$/.test(code)) {
+      setCouponError(lang === "pt" ? "Use 3 a 30 letras, números, hífenes ou underscores." : "Use 3 to 30 letters, numbers, hyphens or underscores.");
+      return;
+    }
+    if (discount < 1 || discount > 95) {
+      setCouponError(lang === "pt" ? "O desconto deve estar entre 1% e 95%." : "The discount must be between 1% and 95%.");
+      return;
+    }
+    if (coupons.some((coupon) => coupon.code === code)) {
+      setCouponError(lang === "pt" ? "Este código já existe." : "This code already exists.");
+      return;
+    }
+    const coupon = { id: code, code, discount, createdAt: new Date().toISOString() };
+    setCouponError("");
+    setCoupons((items) => [coupon, ...items]);
+    setCouponCode("");
+    setCouponDiscount("10");
+    if (firebaseEnabled) await saveFirebaseCoupon(code, coupon);
+  }
+
+  async function deleteCoupon(code: string) {
+    setCoupons((items) => items.filter((coupon) => coupon.code !== code));
+    if (firebaseEnabled) await removeFirebaseCoupon(code);
+  }
+
   return (
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <div className="admin-metrics">
@@ -2671,6 +2972,31 @@ function AdminPage({
             <label className="field"><span>{copy.category}</span><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value as Product["category"] })}><option>Masculinos</option><option>Femininos</option><option>Unissexo</option></select></label>
             <label className="field"><span>{copy.status}</span><select value={draft.tag} onChange={(event) => setDraft({ ...draft, tag: event.target.value as Product["tag"] })}><option value="stock">{lang === "pt" ? "Em stock" : "In stock"}</option><option value="new">{lang === "pt" ? "Novidade" : "New"}</option><option value="soldout">{lang === "pt" ? "Esgotado" : "Sold out"}</option></select></label>
           </div>
+          <section className="admin-variant-stock">
+            <h3>{copy.variantStock}</h3>
+            <p className="admin-stock-help">{copy.stockHelp}</p>
+            <div>
+              {(products.find((product) => product.id === editingId)?.variants ?? [
+                { volume: draft.volume || "100ml", price: Number(draft.price) || 0 },
+                ...decantVariants(editingId ?? "custom", Number(draft.price) || 0),
+              ]).map((variant, index) => {
+                const volume = index === 0 && !variant.isDecant ? (draft.volume || variant.volume) : variant.volume;
+                const isSoldOut = draft.variantSoldOut[volume] ?? Boolean(variant.soldout);
+                const stockValue = draft.variantStock[volume] ?? (typeof variant.stock === "number" ? String(variant.stock) : "");
+                return (
+                  <div className="admin-variant-stock-row" key={`${volume}-${variant.isDecant ? "decant" : "full"}`}>
+                    <span><strong>{volume}</strong><small>{variant.isDecant ? copy.decant : copy.fullSize}</small></span>
+                    <label className="admin-stock-quantity"><span>{copy.stockQuantity}</span><input type="number" min="0" step="1" value={stockValue} placeholder={copy.stockUndefined} onChange={(event) => setDraft({ ...draft, variantStock: { ...draft.variantStock, [volume]: event.target.value }, variantSoldOut: event.target.value === "0" ? { ...draft.variantSoldOut, [volume]: true } : draft.variantSoldOut })} /></label>
+                    <label className="admin-stock-soldout">
+                      <input className="variant-soldout-input" type="checkbox" checked={isSoldOut} onChange={(event) => setDraft({ ...draft, variantSoldOut: { ...draft.variantSoldOut, [volume]: event.target.checked } })} />
+                      <i><Check size={13} /></i>
+                      <b>{copy.variantSoldOut}</b>
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
           <label className="field"><span>{copy.scentProfile}</span><select value={draft.scentProfile} onChange={(event) => setDraft({ ...draft, scentProfile: event.target.value as ScentProfile })}>{SCENT_PROFILES.map((profile) => <option key={profile} value={profile}>{SCENT_PROFILE_LABELS[lang][profile]}</option>)}</select></label>
           <label className="promotion-toggle best-seller-toggle">
             <input type="checkbox" checked={draft.bestSeller} onChange={(event) => setDraft({ ...draft, bestSeller: event.target.checked })} />
@@ -2679,6 +3005,32 @@ function AdminPage({
           <button className="primary-button" type="submit" disabled={adminBusy}><Save size={16} />{adminBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : copy.save}</button>
           <button className="admin-cancel" type="button" onClick={resetEditor}>{copy.cancel}</button>
           </form>
+        </>
+      )}
+
+      {couponOpen && (
+        <>
+          <button className="modal-backdrop" onClick={() => setCouponOpen(false)} aria-label={copy.cancel} />
+          <section className="coupon-manager" role="dialog" aria-modal="true" aria-labelledby="coupon-manager-title">
+            <header>
+              <div><TicketPercent size={20} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="coupon-manager-title">{copy.couponTitle}</h2></div></div>
+              <button type="button" onClick={() => setCouponOpen(false)} aria-label={copy.cancel}><X size={20} /></button>
+            </header>
+            <form className="coupon-create-form" onSubmit={createCoupon}>
+              <label className="field"><span>{copy.couponCode}</span><input value={couponCode} onChange={(event) => setCouponCode(event.target.value.toUpperCase())} placeholder="MYSTIC10" maxLength={30} required /></label>
+              <label className="field"><span>{copy.couponDiscount}</span><input type="number" min="1" max="95" step="1" value={couponDiscount} onChange={(event) => setCouponDiscount(event.target.value)} required /></label>
+              <button className="primary-button" type="submit"><Plus size={17} />{copy.couponCreate}</button>
+            </form>
+            {couponError && <p className="auth-error" role="alert">{couponError}</p>}
+            <div className="coupon-list">
+              {coupons.length === 0 ? <p>{copy.couponEmpty}</p> : coupons.map((coupon) => (
+                <article key={coupon.code}>
+                  <div><strong>{coupon.code}</strong><span>{coupon.discount}% {lang === "pt" ? "de desconto" : "off"}</span></div>
+                  <button type="button" onClick={() => void deleteCoupon(coupon.code)} aria-label={`${copy.couponRemove} ${coupon.code}`} title={copy.couponRemove}><Trash2 size={16} /></button>
+                </article>
+              ))}
+            </div>
+          </section>
         </>
       )}
 
@@ -2752,6 +3104,7 @@ function AdminPage({
                     <p><CreditCard size={15} /><strong>{order.payment === "mbway" ? "MB WAY" : order.payment === "apple" ? "Apple Pay" : "Visa"}</strong></p>
                     <div className="admin-order-totals">
                       <span>{lang === "pt" ? "Subtotal" : "Subtotal"}<strong>{price(order.subtotal, lang)}</strong></span>
+                      {Boolean(order.discountAmount) && <span className="admin-order-discount">{lang === "pt" ? `Cupão ${order.couponCode}` : `Coupon ${order.couponCode}`}<strong>-{price(order.discountAmount ?? 0, lang)}</strong></span>}
                       <span>{lang === "pt" ? "Envio" : "Shipping"}<strong>{order.shipping === 0 ? (lang === "pt" ? "Grátis" : "Free") : price(order.shipping, lang)}</strong></span>
                     </div>
                   </section>
@@ -2778,43 +3131,100 @@ function CheckoutPage({
   t,
   lang,
   cart,
+  coupons,
   onCreateOrder,
   onBack,
 }: {
   t: (typeof COPY)[Lang];
   lang: Lang;
   cart: CartItem[];
+  coupons: Coupon[];
   onCreateOrder: (order: Order) => void;
   onBack: () => void;
 }) {
   const [payment, setPayment] = useState<PaymentMethod>("mbway");
+  const [billingSameAsContact, setBillingSameAsContact] = useState(false);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
+  const [couponInput, setCouponInput] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<Pick<Coupon, "code" | "discount"> | null>(null);
+  const [couponMessage, setCouponMessage] = useState("");
+  const [couponBusy, setCouponBusy] = useState(false);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const shipping = subtotal >= 85 ? 0 : 4.9;
-  const total = subtotal + shipping;
+  const discountAmount = appliedCoupon ? Math.round(subtotal * appliedCoupon.discount) / 100 : 0;
+  const total = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
   const copy = t.checkoutPage;
+
+  async function applyCoupon() {
+    const code = couponInput.trim().toUpperCase();
+    setCouponMessage("");
+    setAppliedCoupon(null);
+    if (!code) return;
+    const localCoupon = coupons.find((coupon) => coupon.code === code);
+    if (localCoupon) {
+      setAppliedCoupon({ code: localCoupon.code, discount: localCoupon.discount });
+      setCouponMessage(`${copy.promoApplied}: ${localCoupon.discount}%`);
+      return;
+    }
+    if (!firebaseEnabled) {
+      setCouponMessage(copy.promoInvalid);
+      return;
+    }
+    setCouponBusy(true);
+    try {
+      const coupon = await validateCoupon(code);
+      setAppliedCoupon(coupon);
+      setCouponMessage(`${copy.promoApplied}: ${coupon.discount}%`);
+    } catch {
+      setCouponMessage(copy.promoInvalid);
+    } finally {
+      setCouponBusy(false);
+    }
+  }
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const createdAt = new Date().toISOString();
+    const customerName = String(form.get("name") ?? "").trim();
+    const customerTaxId = String(form.get("taxId") ?? "").trim();
+    const deliveryAddress = String(form.get("address") ?? "").trim();
+    const deliveryPostal = String(form.get("postal") ?? "").trim();
+    const deliveryCity = String(form.get("city") ?? "").trim();
     const order: Order = {
       id: `ME-${createdAt.replace(/\D/g, "").slice(-8)}`,
       createdAt,
       customer: {
-        name: String(form.get("name") ?? "").trim(),
+        name: customerName,
         email: String(form.get("email") ?? "").trim(),
         phone: String(form.get("phone") ?? "").trim(),
-        address: String(form.get("address") ?? "").trim(),
-        postal: String(form.get("postal") ?? "").trim(),
-        city: String(form.get("city") ?? "").trim(),
+        address: deliveryAddress,
+        postal: deliveryPostal,
+        city: deliveryCity,
+        taxId: customerTaxId,
         notes: String(form.get("notes") ?? "").trim(),
       },
+      billing: billingSameAsContact
+        ? {
+            sameAsContact: true,
+            name: customerName,
+            address: [deliveryAddress, deliveryPostal, deliveryCity].filter(Boolean).join(", "),
+            taxId: customerTaxId,
+          }
+        : {
+            sameAsContact: false,
+            name: String(form.get("billingName") ?? "").trim(),
+            address: String(form.get("billingAddress") ?? "").trim(),
+            taxId: String(form.get("billingTaxId") ?? "").trim(),
+          },
       items: cart.map((item) => ({ id: item.id, name: item.name, brand: item.brand, volume: item.volume, price: item.price, qty: item.qty, imageUrl: item.imageUrl })),
       subtotal,
       shipping,
+      couponCode: appliedCoupon?.code,
+      discount: appliedCoupon?.discount,
+      discountAmount,
       total,
       payment,
       status: "received",
@@ -2828,6 +3238,8 @@ function CheckoutPage({
           lang,
           paymentMethod: payment,
           customer: order.customer,
+          billing: order.billing,
+          couponCode: appliedCoupon?.code,
           items: cart.map((item) => ({ productId: item.id, volume: item.volume, quantity: item.qty })),
         };
         if (paymentsEnabled) {
@@ -2882,8 +3294,29 @@ function CheckoutPage({
               <label className="field full"><span>{copy.name}</span><input name="name" autoComplete="name" required /></label>
               <label className="field"><span>{copy.email}</span><input name="email" type="email" autoComplete="email" required /></label>
               <label className="field"><span>{copy.phone}</span><input name="phone" type="tel" inputMode="tel" autoComplete="tel" required /></label>
+              <label className="field full"><span>{copy.taxId}</span><input name="taxId" inputMode="numeric" autoComplete="off" maxLength={9} pattern="[0-9]{9}" /></label>
             </div>
+            <label className="billing-match">
+              <input
+                type="checkbox"
+                checked={billingSameAsContact}
+                onChange={(event) => setBillingSameAsContact(event.target.checked)}
+              />
+              <span aria-hidden="true"><Check size={14} /></span>
+              <strong>{copy.sameBilling}</strong>
+            </label>
           </section>
+
+          {!billingSameAsContact && (
+            <section className="checkout-section billing-section">
+              <h2>{copy.billingTitle}</h2>
+              <div className="form-grid">
+                <label className="field full"><span>{copy.billingName}</span><input name="billingName" autoComplete="billing name" required /></label>
+                <label className="field full"><span>{copy.billingAddress}</span><input name="billingAddress" autoComplete="billing street-address" required /></label>
+                <label className="field full"><span>{copy.billingTaxId}</span><input name="billingTaxId" inputMode="numeric" autoComplete="off" maxLength={9} pattern="[0-9]{9}" required /></label>
+              </div>
+            </section>
+          )}
 
           <section className="checkout-section">
             <h2>{copy.deliveryTitle}</h2>
@@ -2930,8 +3363,17 @@ function CheckoutPage({
               </div>
             ))}
           </div>
+          <div className="checkout-coupon">
+            <label htmlFor="checkout-coupon-code">{copy.promoCode}</label>
+            <div>
+              <input id="checkout-coupon-code" value={couponInput} onChange={(event) => setCouponInput(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void applyCoupon(); } }} placeholder={copy.promoPlaceholder} maxLength={30} autoComplete="off" />
+              <button type="button" onClick={() => void applyCoupon()} disabled={couponBusy || !couponInput.trim()}>{couponBusy ? "..." : copy.promoApply}</button>
+            </div>
+            {couponMessage && <p className={appliedCoupon ? "valid" : "invalid"}>{appliedCoupon && <Check size={14} />}{couponMessage}</p>}
+          </div>
           <div className="summary-lines">
             <p><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>
+            {appliedCoupon && <p className="summary-discount"><span>{copy.discount} ({appliedCoupon.code})</span><strong>-{price(discountAmount, lang)}</strong></p>}
             <p><span>{copy.shipping}</span><strong>{shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
             <p className="summary-total"><span>{copy.total}</span><strong>{price(total, lang)}</strong></p>
           </div>
@@ -2981,7 +3423,10 @@ function CartDrawer({
         ) : (
           <>
             <div className="cart-items">
-              {cart.map((item) => (
+              {cart.map((item) => {
+                const availableStock = typeof item.variants[0]?.stock === "number" ? Math.max(0, item.variants[0].stock) : MAX_ORDER_QUANTITY;
+                const maximumQuantity = Math.min(MAX_ORDER_QUANTITY, availableStock);
+                return (
                 <article key={item.id} className="cart-item">
                   <ProductVisual product={item} compact />
                   <div>
@@ -2991,13 +3436,14 @@ function CartDrawer({
                       <div className="qty-control small">
                         <button onClick={() => onUpdate(item.id, Math.max(1, item.qty - 1))}><Minus size={13} /></button>
                         <span>{item.qty}</span>
-                        <button onClick={() => onUpdate(item.id, Math.min(9, item.qty + 1))}><Plus size={13} /></button>
+                        <button disabled={item.qty >= maximumQuantity} onClick={() => onUpdate(item.id, Math.min(maximumQuantity, item.qty + 1))}><Plus size={13} /></button>
                       </div>
                       <button className="remove-button" onClick={() => onRemove(item.id)}>{t.remove}</button>
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
             <footer>
               <p><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>

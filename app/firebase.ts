@@ -159,6 +159,49 @@ export async function updateOrder(id: string, data: Record<string, unknown>) {
   await updateDoc(doc(database, "orders", id), cleanData(data));
 }
 
+export function watchCoupons<T>(callback: (coupons: T[]) => void) {
+  if (!database) return () => undefined;
+  return onSnapshot(query(collection(database, "coupons"), orderBy("createdAt", "desc")), (snapshot) => {
+    callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as T)));
+  }, (error) => console.error("Não foi possível acompanhar os cupões.", error));
+}
+
+export async function saveCoupon<T extends object>(code: string, coupon: T) {
+  if (!database) return;
+  await setDoc(doc(database, "coupons", code), cleanData(coupon));
+}
+
+export async function removeCoupon(code: string) {
+  if (!database) return;
+  await deleteDoc(doc(database, "coupons", code));
+}
+
+export async function validateCoupon(code: string) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<{ code: string }, { code: string; discount: number }>(functions, "validateCoupon");
+  return (await callable({ code })).data;
+}
+
+export function watchReviews<T>(productId: string, callback: (reviews: T[]) => void) {
+  if (!database) return () => undefined;
+  return onSnapshot(
+    query(collection(database, "reviews"), where("productId", "==", productId)),
+    (snapshot) => {
+      const reviews = snapshot.docs
+        .map((item) => ({ id: item.id, ...item.data() } as unknown as T & { createdAt?: string }))
+        .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+      callback(reviews);
+    },
+    (error) => console.error("Não foi possível acompanhar as avaliações.", error),
+  );
+}
+
+export async function submitReview(payload: { productId: string; rating: number; comment: string }) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<typeof payload, { reviewId: string }>(functions, "submitReview");
+  return (await callable(payload)).data;
+}
+
 export function watchFavoriteFolders<T>(uid: string, callback: (folders: T[]) => void) {
   if (!database) return () => undefined;
   return onSnapshot(collection(database, "profiles", uid, "favoriteFolders"), (snapshot) => {
