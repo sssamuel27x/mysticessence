@@ -2,8 +2,8 @@
 
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { PRODUCT_IMAGE_IDS } from "./product-images";
+import { LEGAL_DOCUMENTS, type LegalKind } from "./legal-content";
 import {
   createCheckout,
   createPendingOrder,
@@ -84,7 +84,7 @@ import {
 } from "lucide-react";
 
 type Lang = "pt" | "en";
-type View = "home" | "listing" | "product" | "checkout" | "account" | "admin";
+type View = "home" | "listing" | "product" | "checkout" | "account" | "admin" | "legal";
 type ListingKind = "all" | "new" | "best" | "sale" | "decants" | "men" | "women" | "unisex";
 type ScentProfile = "fresh" | "fruity" | "floral" | "sweet" | "woody";
 type PaymentMethod = "mbway" | "apple" | "visa";
@@ -148,6 +148,14 @@ type AppRoute = {
   listing: ListingKind;
   profileFilter: ScentProfile | null;
   activeId?: string;
+  legal?: LegalKind;
+};
+
+const LEGAL_PATHS: Record<LegalKind, string> = {
+  terms: "/termos-e-condicoes",
+  privacy: "/politica-de-privacidade",
+  cookies: "/politica-de-cookies",
+  returns: "/devolucoes-e-reembolsos",
 };
 
 const LISTING_PATHS: Record<ListingKind, string> = {
@@ -163,6 +171,8 @@ const LISTING_PATHS: Record<ListingKind, string> = {
 
 function routeFromPath(pathname: string): AppRoute {
   const path = pathname.replace(/\/+$/, "") || "/";
+  const legalEntry = (Object.entries(LEGAL_PATHS) as [LegalKind, string][]).find(([, routePath]) => routePath === path);
+  if (legalEntry) return { view: "legal", listing: "all", profileFilter: null, legal: legalEntry[0] };
   const listingEntry = (Object.entries(LISTING_PATHS) as [ListingKind, string][]).find(([, routePath]) => routePath === path);
   if (listingEntry) return { view: "listing", listing: listingEntry[0], profileFilter: null };
   if (path.startsWith("/perfil-olfativo/")) {
@@ -364,8 +374,8 @@ const COPY = {
       shipping: "Envio",
       free: "Grátis",
       total: "Total",
-      confirm: "Confirmar pedido",
-      secure: "Os seus dados permanecem neste mockup e não são enviados.",
+      confirm: "Encomenda com obrigação de pagar",
+      secure: "Os seus dados são utilizados para processar e entregar a encomenda.",
       successTitle: "Pedido confirmado",
       successText: "A demonstração do checkout foi concluída. Nenhum pagamento real foi processado.",
       continue: "Continuar a comprar",
@@ -378,7 +388,7 @@ const COPY = {
     footerTag: "Perfumaria árabe autêntica em Santa Maria da Feira, Aveiro.",
     contact: "Contactos",
     address: "R. São Nicolau 8 Lj 20, 4520-248 Santa Maria da Feira",
-    phone: "932 761 915",
+    phone: "+351 938 258 798",
     hours: "Seg-Sex 10:30-13:00, 14:30-19:00",
     legal: "Termos e políticas",
     rights: "Todos os direitos reservados.",
@@ -459,8 +469,8 @@ const COPY = {
       shipping: "Shipping",
       free: "Free",
       total: "Total",
-      confirm: "Confirm order",
-      secure: "Your details remain in this mockup and are not sent anywhere.",
+      confirm: "Order with obligation to pay",
+      secure: "Your details are used to process and deliver your order.",
       successTitle: "Order confirmed",
       successText: "The checkout demonstration is complete. No real payment was processed.",
       continue: "Continue shopping",
@@ -473,7 +483,7 @@ const COPY = {
     footerTag: "Authentic Arabian perfumery in Santa Maria da Feira, Aveiro.",
     contact: "Contacts",
     address: "R. São Nicolau 8 Lj 20, 4520-248 Santa Maria da Feira",
-    phone: "932 761 915",
+    phone: "+351 938 258 798",
     hours: "Mon-Fri 10:30-13:00, 14:30-19:00",
     legal: "Terms and policies",
     rights: "All rights reserved.",
@@ -905,6 +915,9 @@ function usePromotionClock(product: Product) {
 export default function Home() {
   const [lang, setLang] = useState<Lang>("pt");
   const [view, setView] = useState<View>("home");
+  const [legalKind, setLegalKind] = useState<LegalKind>("terms");
+  const [cookieChoice, setCookieChoice] = useState<"accepted" | "rejected" | null>(null);
+  const [cookiePanelOpen, setCookiePanelOpen] = useState(false);
   const [catalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
   const [session, setSession] = useState<Session | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -946,6 +959,16 @@ export default function Home() {
     }).slice(0, 5);
   }, [query, lang, catalog]);
 
+  function applyRoute(route: AppRoute) {
+    setView(route.view);
+    setListing(route.listing);
+    setProfileFilter(route.profileFilter);
+    if (route.activeId) setActiveId(route.activeId);
+    if (route.legal) setLegalKind(route.legal);
+    setMobileOpen(false);
+    setCartOpen(false);
+  }
+
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [view, listing, activeId, profileFilter]);
@@ -961,6 +984,18 @@ export default function Home() {
     document.body.classList.toggle("drawer-lock", cartOpen || mobileOpen);
     return () => document.body.classList.remove("drawer-lock");
   }, [cartOpen, mobileOpen]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("mystic-cookie-consent-v1");
+    const timer = window.setTimeout(() => {
+      if (stored === "accepted" || stored === "rejected") {
+        setCookieChoice(stored);
+      } else {
+        setCookiePanelOpen(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => watchSession((nextSession) => setSession(nextSession)), []);
 
@@ -1014,15 +1049,6 @@ export default function Home() {
     toastTimer.current = setTimeout(() => setToast(""), 2200);
   }
 
-  function applyRoute(route: AppRoute) {
-    setView(route.view);
-    setListing(route.listing);
-    setProfileFilter(route.profileFilter);
-    if (route.activeId) setActiveId(route.activeId);
-    setMobileOpen(false);
-    setCartOpen(false);
-  }
-
   function navigate(path: string, route: AppRoute) {
     if (window.location.pathname !== path) window.history.pushState({ mysticRoute: true }, "", path);
     applyRoute(route);
@@ -1043,6 +1069,16 @@ export default function Home() {
   function openProduct(id: string) {
     navigate(`/produto/${encodeURIComponent(id)}`, { view: "product", listing, profileFilter, activeId: id });
     setQuery("");
+  }
+
+  function openLegal(kind: LegalKind) {
+    navigate(LEGAL_PATHS[kind], { view: "legal", listing: "all", profileFilter: null, legal: kind });
+  }
+
+  function saveCookieChoice(choice: "accepted" | "rejected") {
+    window.localStorage.setItem("mystic-cookie-consent-v1", choice);
+    setCookieChoice(choice);
+    setCookiePanelOpen(false);
   }
 
   function addToCart(product: Product, quantity = 1) {
@@ -1212,9 +1248,13 @@ export default function Home() {
             }}
           />
         )}
+
+        {view === "legal" && (
+          <LegalPage kind={legalKind} onLegal={openLegal} onHome={openHome} />
+        )}
       </main>
 
-      <Footer t={t} />
+      <Footer t={t} onLegal={openLegal} onCookies={() => setCookiePanelOpen(true)} />
       <CartDrawer
         t={t}
         lang={lang}
@@ -1251,6 +1291,21 @@ export default function Home() {
           <Check size={16} />
           {toast}
         </div>
+      )}
+      {cookiePanelOpen && (
+        <CookieConsent
+          choice={cookieChoice}
+          onAccept={() => saveCookieChoice("accepted")}
+          onReject={() => saveCookieChoice("rejected")}
+          onCookies={() => {
+            setCookiePanelOpen(false);
+            openLegal("cookies");
+          }}
+          onPrivacy={() => {
+            setCookiePanelOpen(false);
+            openLegal("privacy");
+          }}
+        />
       )}
     </div>
   );
@@ -3377,6 +3432,16 @@ function CheckoutPage({
             <p><span>{copy.shipping}</span><strong>{shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
             <p className="summary-total"><span>{copy.total}</span><strong>{price(total, lang)}</strong></p>
           </div>
+          <label className="checkout-legal-acceptance">
+            <input type="checkbox" required />
+            <span aria-hidden="true"><Check size={13} /></span>
+            <strong>
+              {lang === "pt" ? "Li e aceito os " : "I have read and accept the "}
+              <a href={LEGAL_PATHS.terms} target="_blank" rel="noreferrer">{lang === "pt" ? "Termos e Condições" : "Terms and Conditions"}</a>
+              {lang === "pt" ? " e a " : " and the "}
+              <a href={LEGAL_PATHS.privacy} target="_blank" rel="noreferrer">{lang === "pt" ? "Política de Privacidade" : "Privacy Policy"}</a>.
+            </strong>
+          </label>
           {checkoutError && <p className="auth-error" role="alert">{checkoutError}</p>}
           <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
           <p className="secure-note"><LockKeyhole size={14} />{copy.secure}</p>
@@ -3457,7 +3522,88 @@ function CartDrawer({
   );
 }
 
-function Footer({ t }: { t: (typeof COPY)[Lang] }) {
+function LegalPage({ kind, onLegal, onHome }: { kind: LegalKind; onLegal: (kind: LegalKind) => void; onHome: () => void }) {
+  const document = LEGAL_DOCUMENTS[kind];
+  const tabs: { kind: LegalKind; label: string }[] = [
+    { kind: "terms", label: "Termos e Condições" },
+    { kind: "privacy", label: "Privacidade" },
+    { kind: "cookies", label: "Cookies" },
+    { kind: "returns", label: "Devoluções" },
+  ];
+
+  return (
+    <section className="legal-page">
+      <div className="legal-heading">
+        <button type="button" onClick={onHome}><ArrowLeft size={17} />Voltar à loja</button>
+        <span className="eyebrow">{document.eyebrow}</span>
+        <h1>{document.title}</h1>
+        <p>{document.intro}</p>
+        <time>Última atualização: {document.updated}</time>
+      </div>
+      <nav className="legal-tabs" aria-label="Documentos legais">
+        {tabs.map((tab) => (
+          <button type="button" key={tab.kind} className={kind === tab.kind ? "active" : ""} onClick={() => onLegal(tab.kind)}>
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+      <article className="legal-document">
+        {document.sections.map((section) => (
+          <section key={section.title}>
+            <h2>{section.title}</h2>
+            {section.paragraphs?.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {section.bullets && (
+              <ul>{section.bullets.map((item) => <li key={item}>{item}</li>)}</ul>
+            )}
+          </section>
+        ))}
+      </article>
+      <aside className="legal-help">
+        <ShieldCheck size={21} />
+        <div><strong>Precisa de esclarecimentos?</strong><p>Contacte-nos através de mystic.essence@hotmail.com ou +351 938 258 798.</p></div>
+      </aside>
+    </section>
+  );
+}
+
+function CookieConsent({
+  choice,
+  onAccept,
+  onReject,
+  onCookies,
+  onPrivacy,
+}: {
+  choice: "accepted" | "rejected" | null;
+  onAccept: () => void;
+  onReject: () => void;
+  onCookies: () => void;
+  onPrivacy: () => void;
+}) {
+  return (
+    <div className="cookie-consent" role="dialog" aria-modal="true" aria-labelledby="cookie-title">
+      <div className="cookie-consent-icon"><Cookie size={23} /></div>
+      <div className="cookie-consent-copy">
+        <span>Privacidade sob controlo</span>
+        <h2 id="cookie-title">A sua escolha de cookies</h2>
+        <p>Utilizamos tecnologias necessárias para manter a conta, proteger o site e guardar esta escolha. Atualmente não utilizamos cookies de publicidade ou analítica.</p>
+        <div className="cookie-consent-links">
+          <button type="button" onClick={onCookies}>Consultar Política de Cookies</button>
+          <button type="button" onClick={onPrivacy}>Política de Privacidade</button>
+        </div>
+      </div>
+      <div className="cookie-consent-actions">
+        <button type="button" onClick={onReject}>Rejeitar opcionais</button>
+        <button type="button" onClick={onAccept}>Aceitar opcionais</button>
+        {choice && <small>Escolha atual: {choice === "accepted" ? "aceite" : "rejeitada"}</small>}
+      </div>
+    </div>
+  );
+}
+
+function Footer({ t, onLegal, onCookies }: { t: (typeof COPY)[Lang]; onLegal: (kind: LegalKind) => void; onCookies: () => void }) {
+  const legalLink = (kind: LegalKind, label: string) => (
+    <a href={LEGAL_PATHS[kind]} onClick={(event) => { event.preventDefault(); onLegal(kind); }}>{label}</a>
+  );
   return (
     <footer className="footer">
       <div className="footer-grid">
@@ -3474,15 +3620,18 @@ function Footer({ t }: { t: (typeof COPY)[Lang] }) {
           <h3>Contactos</h3>
           <p>{t.address}</p>
           <p>{t.phone}</p>
+          <p>mystic.essence@hotmail.com</p>
+          <p>NIF: 238368734</p>
           <p>{t.hours}</p>
         </div>
         <div>
           <span>{t.legal}</span>
-          <Link href="/#termos">Termos e Condições</Link>
-          <Link href="/#privacidade">Política de Privacidade</Link>
-          <Link href="/#cookies">Política de Cookies</Link>
-          <Link href="/#devolucoes">Política de Devoluções</Link>
-          <Link href="/#reclamacoes">Livro de Reclamações</Link>
+          {legalLink("terms", "Termos e Condições")}
+          {legalLink("privacy", "Política de Privacidade")}
+          {legalLink("cookies", "Política de Cookies")}
+          {legalLink("returns", "Devoluções e Reembolsos")}
+          <button type="button" className="footer-cookie-button" onClick={onCookies}>Gerir cookies</button>
+          <a href="https://www.livroreclamacoes.pt/Inicio/" target="_blank" rel="noreferrer">Livro de Reclamações Eletrónico</a>
         </div>
       </div>
       <div className="footer-bottom">© 2026 Mystic Essence. {t.rights}</div>
