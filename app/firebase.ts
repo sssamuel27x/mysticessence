@@ -27,11 +27,24 @@ import { getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
 
 type PublicEnv = Record<string, string | undefined>;
 
-const viteEnv = ((import.meta as ImportMeta & { env?: PublicEnv }).env ?? {}) as PublicEnv;
 const nodeEnv: PublicEnv = typeof process !== "undefined" ? process.env as PublicEnv : {};
 
+// Vite only replaces environment variables that are referenced statically.
+const publicEnv: PublicEnv = {
+  FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY,
+  FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  FIREBASE_STORAGE_BUCKET: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  FIREBASE_MESSAGING_SENDER_ID: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID,
+  FIREBASE_ADMIN_UID: import.meta.env.VITE_FIREBASE_ADMIN_UID,
+  FIREBASE_FUNCTIONS_REGION: import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION,
+  PAYMENTS_ENABLED: import.meta.env.VITE_PAYMENTS_ENABLED,
+  STORAGE_ENABLED: import.meta.env.VITE_STORAGE_ENABLED,
+};
+
 function env(name: string) {
-  return viteEnv[`VITE_${name}`] ?? nodeEnv[`NEXT_PUBLIC_${name}`];
+  return publicEnv[name] ?? nodeEnv[`NEXT_PUBLIC_${name}`];
 }
 
 const firebaseConfig = {

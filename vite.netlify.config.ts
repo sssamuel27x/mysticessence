@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   root: resolve(process.cwd(), "netlify"),
+  envDir: process.cwd(),
   publicDir: resolve(process.cwd(), "public"),
   plugins: [react()],
   resolve: {
