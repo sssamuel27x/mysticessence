@@ -2226,10 +2226,32 @@ function ProductDetail({
 
             <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
 
-            <label className="select-label">{t.pick}<select value={selectedVolume} onChange={(event) => setSelectedVolume(event.target.value)}>{product.variants.map((variant) => {
-              const unavailable = variant.stock === 0 || Boolean(variant.soldout) || (!variant.isDecant && product.tag === "soldout");
-              return <option key={`${variant.volume}-${variant.price}`} value={variant.volume}>{variant.volume}{variant.isDecant ? " · decant" : ""} — {price(variant.price, lang)}{unavailable ? ` · ${t.soldout}` : ""}</option>;
-            })}</select></label>
+            <fieldset className="variant-picker">
+              <legend>{t.pick}</legend>
+              <div className="variant-options">
+                {product.variants.map((variant) => {
+                  const unavailable = variant.stock === 0 || Boolean(variant.soldout) || (!variant.isDecant && product.tag === "soldout");
+                  const variantDiscount = variant.isDecant ? 0 : discount;
+                  const variantPrice = variantDiscount ? variant.price * (1 - variantDiscount / 100) : variant.price;
+                  const active = variant.volume === selectedVolume;
+                  const volumeLabel = variant.volume.replace(/(\d)\s*ml/i, "$1 ml");
+                  return (
+                    <button
+                      type="button"
+                      key={`${variant.volume}-${variant.price}`}
+                      className={`${active ? "active" : ""} ${unavailable ? "unavailable" : ""}`.trim()}
+                      onClick={() => setSelectedVolume(variant.volume)}
+                      disabled={unavailable}
+                      aria-pressed={active}
+                    >
+                      <span>{volumeLabel}</span>
+                      <small>{variant.isDecant ? "Decant" : lang === "pt" ? "Frasco completo" : "Full bottle"}</small>
+                      <strong>{unavailable ? t.soldout : price(variantPrice, lang)}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
 
             <div className="buy-row">
               <div className="qty-control" aria-label={t.qty}>
@@ -3628,9 +3650,13 @@ function Footer({ t, onLegal, onCookies }: { t: (typeof COPY)[Lang]; onLegal: (k
           <span>{t.legal}</span>
           {legalLink("terms", "Termos e Condições")}
           {legalLink("privacy", "Política de Privacidade")}
-          {legalLink("cookies", "Política de Cookies")}
+          <div className="footer-cookie-row">
+            {legalLink("cookies", "Política de Cookies")}
+            <button type="button" className="footer-cookie-button" onClick={onCookies} aria-label="Alterar preferências de cookies" title="Alterar preferências de cookies">
+              <Cookie size={15} />
+            </button>
+          </div>
           {legalLink("returns", "Devoluções e Reembolsos")}
-          <button type="button" className="footer-cookie-button" onClick={onCookies}>Gerir cookies</button>
           <a href="https://www.livroreclamacoes.pt/Inicio/" target="_blank" rel="noreferrer">Livro de Reclamações Eletrónico</a>
         </div>
       </div>
