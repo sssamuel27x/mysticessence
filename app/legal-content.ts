@@ -15,7 +15,7 @@ export type LegalDocument = {
 };
 
 const business = {
-  legalName: "Alexandre Sereno",
+  legalName: "Veronica Reis",
   tradeName: "Mystic Essence - Perfumaria Árabe",
   taxId: "238368734",
   address: "Rua de São Nicolau, n.º 8, loja 20, 4520-248 Santa Maria da Feira, Portugal",

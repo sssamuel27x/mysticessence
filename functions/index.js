@@ -1,4 +1,3 @@
-const { createClient } = require("@ifthenpay/js-sdk");
 const { createHash } = require("node:crypto");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -9,12 +8,20 @@ const { HttpsError, onCall, onRequest } = require("firebase-functions/v2/https")
 initializeApp();
 const db = getFirestore();
 const region = "europe-west1";
-const ifthenpayToken = defineSecret("IFTHENPAY_AUTH_TOKEN");
+const ifthenpayMbKey = defineSecret("IFTHENPAY_MB_KEY");
+const ifthenpayMbwayKey = defineSecret("IFTHENPAY_MBWAY_KEY");
+const ifthenpayPayshopKey = defineSecret("IFTHENPAY_PAYSHOP_KEY");
+const ifthenpayCardKey = defineSecret("IFTHENPAY_CARD_KEY");
 const callbackKey = defineSecret("IFTHENPAY_CALLBACK_KEY");
 const ownerEmail = defineSecret("OWNER_EMAIL");
 const publicSiteUrl = defineString("PUBLIC_SITE_URL", { default: "http://localhost:3000" });
 
 const currency = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
+const shippingZones = {
+  continental: { label: "Portugal Continental", fee: 4.9, freeFrom: 85 },
+  islands: { label: "Madeira / Açores", fee: 12, freeFrom: 100 },
+  spain: { label: "Espanha", fee: 10, freeFrom: 100 },
+};
 
 function text(value, max = 500) {
   return String(value ?? "").trim().slice(0, max);
@@ -27,6 +34,57 @@ function html(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function normalizeShippingZone(value) {
+  const zone = text(value, 30);
+  return Object.prototype.hasOwnProperty.call(shippingZones, zone) ? zone : "continental";
+}
+
+function amount(value) {
+  return Number(value).toFixed(2);
+}
+
+function expiryDate(days) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function normalizePortugueseMobile(value) {
+  let mobile = text(value, 40).replace(/\D/g, "");
+  if (mobile.startsWith("00351")) mobile = mobile.slice(5);
+  if (mobile.startsWith("351")) mobile = mobile.slice(3);
+  if (!/^9\d{8}$/.test(mobile)) {
+    throw new HttpsError("invalid-argument", "No campo Número de telefone, indique o telemóvel associado ao MB WAY: 9 algarismos começados por 9, com ou sem +351.");
+  }
+  return `351#${mobile}`;
+}
+
+async function ifthenpayRequest(url, payload) {
+  const apiResponse = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const responseText = await apiResponse.text();
+  let data;
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = { raw: responseText };
+  }
+  if (!apiResponse.ok) {
+    const apiMessage = text(data?.Message || data?.message || data?.raw, 300);
+    throw new Error(apiMessage || `IFTHENPAY HTTP ${apiResponse.status}`);
+  }
+  return data;
+}
+
+function assertIfthenpayStatus(data, expectedField, expectedValue) {
+  if (String(data?.[expectedField] ?? "") !== expectedValue) {
+    throw new Error(text(data?.Message || data?.message || `Resposta IFTHENPAY inválida (${expectedField}).`, 300));
+  }
 }
 
 function emailFrame(title, intro, content) {
@@ -44,7 +102,25 @@ function billingHtml(order) {
 
 function totalsHtml(order) {
   const discount = Number(order.discountAmount || 0);
-  return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discount > 0 ? `<div><span>Desconto (${html(order.couponCode)})</span><strong style="float:right;color:#ddb64e">-${currency.format(discount)}</strong></div>` : ""}<div><span>Envio</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
+  const zone = normalizeShippingZone(order.shippingZone);
+  return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discount > 0 ? `<div><span>Desconto (${html(order.couponCode)})</span><strong style="float:right;color:#ddb64e">-${currency.format(discount)}</strong></div>` : ""}<div><span>Zona de entrega</span><strong style="float:right;color:#f5efe3">${html(shippingZones[zone].label)}</strong></div>${order.shippingCarrierName ? `<div><span>Transportadora</span><strong style="float:right;color:#f5efe3">${html(order.shippingCarrierName)}</strong></div>${order.shippingDescription ? `<div>${html(order.shippingDescription)}</div>` : ""}` : ""}<div><span>Envio</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
+}
+
+function paymentInstructionsHtml(order) {
+  const method = text(order.paymentMethod, 30).toLowerCase();
+  if (method === "multibanco" && order.paymentEntity && order.paymentReference) {
+    return `<div style="margin-top:22px;padding:18px;border:1px solid #8d691e"><p style="margin:0 0 12px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>Pagamento por Multibanco</strong></p><p style="margin:0;color:#c7beb0;line-height:1.8"><strong>Entidade:</strong> ${html(order.paymentEntity)}<br><strong>Referência:</strong> ${html(order.paymentReference)}<br><strong>Montante:</strong> ${currency.format(order.total)}</p></div>`;
+  }
+  if (method === "payshop" && order.paymentReference) {
+    return `<div style="margin-top:22px;padding:18px;border:1px solid #8d691e"><p style="margin:0 0 12px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>Pagamento por Payshop</strong></p><p style="margin:0;color:#c7beb0;line-height:1.8"><strong>Referência:</strong> ${html(order.paymentReference)}<br><strong>Montante:</strong> ${currency.format(order.total)}</p></div>`;
+  }
+  if (method === "mbway") {
+    return `<div style="margin-top:22px;padding:18px;border:1px solid #8d691e"><p style="margin:0 0 12px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>Pagamento por MB WAY</strong></p><p style="margin:0;color:#c7beb0;line-height:1.7">Aprove o pedido de pagamento recebido no telemóvel associado ao número indicado na encomenda.</p></div>`;
+  }
+  if (method === "card") {
+    return `<div style="margin-top:22px;padding:18px;border:1px solid #8d691e"><p style="margin:0 0 12px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>Pagamento por cartão</strong></p><p style="margin:0;color:#c7beb0;line-height:1.7">O pagamento é concluído na página segura da IFTHENPAY.</p></div>`;
+  }
+  return "";
 }
 
 async function queueEmail(to, subject, htmlBody, id) {
@@ -69,10 +145,12 @@ function liveDiscount(product) {
 }
 
 async function createOrderRecord(request, paymentMode) {
+  const { DEFAULT_SHIPPING_SETTINGS, normalizeShippingSettings, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
   const input = request.data || {};
   const customer = input.customer || {};
   const requestedBilling = input.billing || {};
   const requestedItems = Array.isArray(input.items) ? input.items.slice(0, 50) : [];
+  const shippingZone = normalizeShippingZone(input.shippingZone);
   if (!requestedItems.length) throw new HttpsError("invalid-argument", "O carrinho está vazio.");
   if (!text(customer.name) || !text(customer.email) || !text(customer.phone) || !text(customer.address) || !text(customer.postal) || !text(customer.city)) {
     throw new HttpsError("invalid-argument", "Preencha todos os dados de entrega.");
@@ -92,6 +170,13 @@ async function createOrderRecord(request, paymentMode) {
   const orderId = `ME${Date.now().toString(36).slice(-8)}${Math.random().toString(36).slice(2, 5)}`.toUpperCase().slice(0, 15);
   const orderRef = db.collection("orders").doc(orderId);
   const order = await db.runTransaction(async (transaction) => {
+    const shippingSnapshot = await transaction.get(db.collection("settings").doc("shipping"));
+    const shippingSettings = shippingSnapshot.exists ? normalizeShippingSettings(shippingSnapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS;
+    if (!shippingSettings) {
+      throw new HttpsError("failed-precondition", "Os portes estão indisponíveis. Contacte a loja.");
+    }
+    const carrier = getShippingCarrier(shippingZone, shippingSettings, input.shippingCarrierId);
+    if (!carrier) throw new HttpsError("failed-precondition", "A transportadora selecionada já não está disponível nesta zona. Reveja a entrega.");
     const productRefs = productIds.map((id) => db.collection("products").doc(id));
     const decantRefs = productIds.map((id) => db.collection("products").doc(`decant-${id}`));
     const couponRef = couponCode ? db.collection("coupons").doc(couponCode) : null;
@@ -147,6 +232,13 @@ async function createOrderRecord(request, paymentMode) {
       };
     });
 
+    const subtotal = Math.round(items.reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
+    const shipping = getShippingCost(subtotal, shippingZone, shippingSettings, carrier.id);
+    // Reject an outdated quote before reserving stock or starting a payment.
+    if (input.expectedShipping !== undefined && input.expectedShipping !== shipping) {
+      throw new HttpsError("failed-precondition", "Os portes foram atualizados. Reveja o total antes de confirmar a encomenda.");
+    }
+
     productIds.forEach((productId, index) => {
       const product = products.get(productId);
       const variants = (product.variants || []).map((variant) => {
@@ -170,9 +262,7 @@ async function createOrderRecord(request, paymentMode) {
       }
     });
 
-    const subtotal = Math.round(items.reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
     const discountAmount = Math.round(subtotal * couponDiscount) / 100;
-    const shipping = subtotal >= 85 ? 0 : 4.9;
     const total = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
     const now = new Date().toISOString();
     const nextOrder = {
@@ -192,6 +282,10 @@ async function createOrderRecord(request, paymentMode) {
       items,
       subtotal,
       shipping,
+      shippingZone,
+      shippingCarrierId: carrier.id,
+      shippingCarrierName: carrier.name,
+      shippingDescription: carrier.description,
       couponCode: couponCode || null,
       discount: couponDiscount,
       discountAmount,
@@ -199,6 +293,7 @@ async function createOrderRecord(request, paymentMode) {
       payment: paymentMode === "ifthenpay" ? "ifthenpay" : text(input.paymentMethod, 30) || "pending",
       paymentMethod: text(input.paymentMethod, 30) || "gateway",
       paymentStatus: "pending",
+      paymentInitiated: paymentMode !== "ifthenpay",
       checkoutMode: paymentMode,
       status: "received",
       archived: false,
@@ -211,6 +306,61 @@ async function createOrderRecord(request, paymentMode) {
   const total = order.total;
 
   return { input, orderId, order, total };
+}
+
+async function restoreReservedInventory(orderId, order) {
+  const requestedByProduct = new Map();
+  (order.items || []).forEach((item) => {
+    const productId = text(item.productId || item.id, 120).replace(/^decant-/, "").split("--")[0];
+    if (!productId) return;
+    if (!requestedByProduct.has(productId)) requestedByProduct.set(productId, new Map());
+    const variants = requestedByProduct.get(productId);
+    variants.set(item.volume, (variants.get(item.volume) || 0) + Math.max(1, Math.trunc(Number(item.qty) || 1)));
+  });
+
+  await db.runTransaction(async (transaction) => {
+    const orderRef = db.collection("orders").doc(orderId);
+    const orderSnapshot = await transaction.get(orderRef);
+    if (!orderSnapshot.exists || orderSnapshot.data().inventoryRestoredAt) return;
+
+    const productsToRestore = [...requestedByProduct.entries()].map(([productId, requestedVariants]) => ({
+      productId,
+      requestedVariants,
+      productRef: db.collection("products").doc(productId),
+      decantRef: db.collection("products").doc(`decant-${productId}`),
+    }));
+    const inventorySnapshots = await Promise.all(productsToRestore.flatMap((entry) => [
+      transaction.get(entry.productRef),
+      transaction.get(entry.decantRef),
+    ]));
+
+    productsToRestore.forEach(({ requestedVariants, productRef, decantRef }, index) => {
+      const productSnapshot = inventorySnapshots[index * 2];
+      const decantSnapshot = inventorySnapshots[index * 2 + 1];
+      if (!productSnapshot.exists) return;
+      const product = productSnapshot.data();
+      const variants = (product.variants || []).map((variant) => {
+        const quantity = requestedVariants.get(variant.volume) || 0;
+        if (!quantity || typeof variant.stock !== "number") return variant;
+        const stock = Math.max(0, Math.trunc(variant.stock)) + quantity;
+        return { ...variant, stock, soldout: false };
+      });
+      transaction.update(productRef, { variants, updatedAt: new Date().toISOString() });
+
+      if (decantSnapshot.exists) {
+        const decantVariants = variants.filter((variant) => variant.isDecant);
+        const firstAvailable = decantVariants.find((variant) => !variant.soldout && variant.stock !== 0) || decantVariants[0];
+        transaction.update(decantRef, {
+          variants: decantVariants,
+          tag: "stock",
+          ...(firstAvailable ? { price: firstAvailable.price, volume: firstAvailable.volume } : {}),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    transaction.update(orderRef, { inventoryRestoredAt: new Date().toISOString() });
+  });
 }
 
 exports.createPendingOrder = onCall({ region }, async (request) => {
@@ -274,60 +424,172 @@ exports.submitReview = onCall({ region }, async (request) => {
   return { reviewId };
 });
 
-exports.createCheckout = onCall({ region, secrets: [ifthenpayToken] }, async (request) => {
-  const { input, orderId, total } = await createOrderRecord(request, "ifthenpay");
+exports.createCheckout = onCall({
+  region,
+  secrets: [ifthenpayMbKey, ifthenpayMbwayKey, ifthenpayPayshopKey, ifthenpayCardKey],
+}, async (request) => {
+  const paymentMethod = text(request.data?.paymentMethod, 30).toLowerCase();
+  if (!['mbway', 'multibanco', 'payshop', 'card'].includes(paymentMethod)) {
+    throw new HttpsError("invalid-argument", "Escolha um método de pagamento válido.");
+  }
+
+  // Validate before creating the order or reserving inventory.
+  const mbwayMobile = paymentMethod === "mbway"
+    ? normalizePortugueseMobile(request.data?.customer?.phone)
+    : null;
+  const { input, orderId, order, total } = await createOrderRecord(request, "ifthenpay");
+  const formattedAmount = amount(total);
+  const language = input.lang === "en" ? "en" : "pt";
+  const baseUrl = publicSiteUrl.value().replace(/\/$/, "");
+  let payment;
 
   try {
-    const client = createClient({
-      authToken: ifthenpayToken.value(),
-      language: input.lang === "en" ? "en" : "pt",
-      payByLinkSuccessUrl: `${publicSiteUrl.value()}/?payment=success&order=${orderId}`,
-      payByLinkErrorUrl: `${publicSiteUrl.value()}/?payment=error&order=${orderId}`,
-      payByLinkCancelUrl: `${publicSiteUrl.value()}/?payment=cancelled&order=${orderId}`,
-      payByLinkBtnCloseUrl: publicSiteUrl.value(),
-      payByLinkBtnCloseLabel: input.lang === "en" ? "Return to Mystic Essence" : "Voltar à Mystic Essence",
-      payByLinkOtp: true,
+    if (paymentMethod === "multibanco") {
+      const data = await ifthenpayRequest("https://api.ifthenpay.com/multibanco/reference/init", {
+        mbKey: ifthenpayMbKey.value(),
+        orderId,
+        amount: formattedAmount,
+        description: `Mystic Essence ${orderId}`,
+        expiryDays: 3,
+      });
+      assertIfthenpayStatus(data, "Status", "0");
+      payment = {
+        method: paymentMethod,
+        entity: text(data.Entity, 20),
+        reference: text(data.Reference, 30),
+        requestId: text(data.RequestId, 200),
+        expiresAt: expiryDate(3),
+      };
+    } else if (paymentMethod === "mbway") {
+      const data = await ifthenpayRequest("https://api.ifthenpay.com/spg/payment/mbway", {
+        mbWayKey: ifthenpayMbwayKey.value(),
+        orderId,
+        amount: formattedAmount,
+        mobileNumber: mbwayMobile,
+        email: order.customer.email,
+        description: `Mystic Essence ${orderId}`,
+      });
+      assertIfthenpayStatus(data, "Status", "000");
+      payment = {
+        method: paymentMethod,
+        requestId: text(data.RequestId, 200),
+        message: language === "en"
+          ? "Approve the MB WAY notification on your phone within four minutes."
+          : "Aprove a notificação MB WAY no seu telemóvel nos próximos quatro minutos.",
+      };
+    } else if (paymentMethod === "payshop") {
+      const data = await ifthenpayRequest("https://api.ifthenpay.com/payshop/reference", {
+        payshopkey: ifthenpayPayshopKey.value(),
+        id: orderId,
+        valor: formattedAmount,
+        validade: expiryDate(3),
+      });
+      assertIfthenpayStatus(data, "Code", "0");
+      payment = {
+        method: paymentMethod,
+        reference: text(data.Reference, 30),
+        requestId: text(data.RequestId, 200),
+        expiresAt: expiryDate(3),
+      };
+    } else {
+      const data = await ifthenpayRequest(`https://api.ifthenpay.com/creditcard/init/${ifthenpayCardKey.value()}`, {
+        orderId,
+        amount: formattedAmount,
+        successUrl: `${baseUrl}/checkout?payment=success&order=${encodeURIComponent(orderId)}`,
+        errorUrl: `${baseUrl}/checkout?payment=error&order=${encodeURIComponent(orderId)}`,
+        cancelUrl: `${baseUrl}/checkout?payment=cancelled&order=${encodeURIComponent(orderId)}`,
+        language,
+      });
+      assertIfthenpayStatus(data, "Status", "0");
+      payment = {
+        method: paymentMethod,
+        paymentUrl: text(data.PaymentUrl, 2000),
+        requestId: text(data.RequestId, 200),
+      };
+      if (!payment.paymentUrl) throw new Error("A IFTHENPAY não devolveu a página segura de pagamento.");
+    }
+
+    await db.collection("orders").doc(orderId).update({
+      paymentMethod,
+      paymentProvider: "ifthenpay",
+      paymentInitiated: true,
+      paymentInitiatedAt: new Date().toISOString(),
+      paymentUrl: payment.paymentUrl || null,
+      paymentEntity: payment.entity || null,
+      paymentReference: payment.reference || null,
+      paymentRequestId: payment.requestId || null,
+      paymentExpiresAt: payment.expiresAt || null,
+      updatedAt: new Date().toISOString(),
     });
-    const payment = await client.payByLink.createPayment({ orderId, amount: total, otp: true, language: input.lang === "en" ? "en" : "pt" });
-    await db.collection("orders").doc(orderId).update({ paymentUrl: payment.paymentUrl, paymentPinCode: payment.pinCode, paymentExpiresAt: payment.expiresAt || null, updatedAt: new Date().toISOString() });
-    return { orderId, paymentUrl: payment.paymentUrl };
+    return { orderId, amount: total, paymentStatus: "pending", ...payment };
   } catch (error) {
-    await db.collection("orders").doc(orderId).update({ paymentStatus: "failed", paymentError: text(error.message, 500), updatedAt: new Date().toISOString() });
-    throw new HttpsError("unavailable", "Não foi possível iniciar o pagamento. Tente novamente.");
+    try {
+      await restoreReservedInventory(orderId, order);
+    } catch (restoreError) {
+      console.error("Could not restore inventory after IFTHENPAY failure", { orderId, error: restoreError.message });
+    }
+    await db.collection("orders").doc(orderId).update({
+      paymentStatus: "failed",
+      paymentError: text(error.message, 500),
+      updatedAt: new Date().toISOString(),
+    });
+    console.error("IFTHENPAY payment initiation failed", { orderId, paymentMethod, error: error.message });
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError("unavailable", "Não foi possível iniciar o pagamento na IFTHENPAY. Confirme os dados e tente novamente.");
   }
 });
 
 exports.ifthenpayCallback = onRequest({ region, secrets: [callbackKey] }, async (request, response) => {
   const input = { ...request.query, ...request.body };
-  const suppliedKey = text(input.antiPhishingKey || input.key, 200);
+  const suppliedKey = text(input.antiPhishingKey || input.anti_phishing_key || input.key, 200);
   if (!suppliedKey || suppliedKey !== callbackKey.value()) return response.status(403).send("forbidden");
-  const orderId = text(input.orderId || input.order_id, 15);
+  const orderId = text(input.orderId || input.order_id || input.id, 15);
   const orderRef = db.collection("orders").doc(orderId);
   const snapshot = await orderRef.get();
   if (!snapshot.exists) return response.status(404).send("unknown order");
   const order = snapshot.data();
-  const callbackAmount = Number(input.amount);
+  const callbackAmount = Number(input.amount || input.valor);
   if (!Number.isFinite(callbackAmount) || Math.abs(callbackAmount - Number(order.total)) > 0.001) return response.status(400).send("amount mismatch");
-  await orderRef.update({ paymentStatus: "paid", transactionId: text(input.transactionId || input.transaction_id, 200), paidAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  const callbackRequestId = text(input.transactionId || input.transaction_id || input.requestId || input.request_id, 200);
+  if (order.paymentRequestId && callbackRequestId && order.paymentRequestId !== callbackRequestId) {
+    return response.status(400).send("request mismatch");
+  }
+  await orderRef.update({
+    paymentStatus: "paid",
+    transactionId: callbackRequestId,
+    paidAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
   return response.status(200).send("ok");
 });
 
-exports.notifyOwnerOfOrder = onDocumentCreated({ document: "orders/{orderId}", region, secrets: [ownerEmail] }, async (event) => {
-  const order = event.data.data();
-  const orderId = event.params.orderId;
+async function queueOrderReceivedEmails(order, orderId) {
   const address = `${html(order.customer.address)}, ${html(order.customer.postal)} ${html(order.customer.city)}`;
-  const ownerBody = emailFrame(`Nova encomenda ${html(orderId)}`, "Foi recebida uma nova encomenda na loja.", `${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(order.discountAmount || 0)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
-  const customerBody = emailFrame(`Recebemos a sua encomenda ${html(orderId)}`, `Olá ${html(order.customer.name)}, a sua encomenda foi recebida e já aparece no nosso sistema.`, `${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando o pagamento for confirmado e quando a encomenda for enviada.</p>`);
+  const shippingZone = normalizeShippingZone(order.shippingZone);
+  const ownerBody = emailFrame(`Nova encomenda ${html(orderId)}`, "Foi recebida uma nova encomenda na loja.", `${itemsHtml(order.items)}${totalsHtml(order)}${paymentInstructionsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(order.discountAmount || 0)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
+  const customerBody = emailFrame(`Recebemos a sua encomenda ${html(orderId)}`, `Olá ${html(order.customer.name)}, a sua encomenda foi recebida e já aparece no nosso sistema.`, `${itemsHtml(order.items)}${totalsHtml(order)}${paymentInstructionsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando o pagamento for confirmado e quando a encomenda for enviada.</p>`);
 
   await Promise.all([
     queueEmail(ownerEmail.value(), `Nova encomenda ${orderId} · Mystic Essence`, ownerBody, `order-${orderId}-owner`),
     queueEmail(order.customer.email, `Recebemos a sua encomenda ${orderId} · Mystic Essence`, customerBody, `order-${orderId}-received`),
   ]);
+}
+
+exports.notifyOwnerOfOrder = onDocumentCreated({ document: "orders/{orderId}", region, secrets: [ownerEmail] }, async (event) => {
+  const order = event.data.data();
+  const orderId = event.params.orderId;
+  if (order.checkoutMode === "ifthenpay" && !order.paymentInitiated) return;
+  await queueOrderReceivedEmails(order, orderId);
+  await event.data.ref.update({ orderReceivedEmailQueuedAt: FieldValue.serverTimestamp() });
 });
 
-exports.notifyCustomerOfPayment = onDocumentUpdated({ document: "orders/{orderId}", region }, async (event) => {
+exports.notifyCustomerOfPayment = onDocumentUpdated({ document: "orders/{orderId}", region, secrets: [ownerEmail] }, async (event) => {
   const before = event.data.before.data();
   const order = event.data.after.data();
+  if (!before.paymentInitiated && order.paymentInitiated && !order.orderReceivedEmailQueuedAt) {
+    await queueOrderReceivedEmails(order, event.params.orderId);
+    await event.data.after.ref.update({ orderReceivedEmailQueuedAt: FieldValue.serverTimestamp() });
+  }
   if (before.paymentStatus !== "paid" && order.paymentStatus === "paid" && !order.confirmationEmailSentAt) {
     const body = emailFrame(`Encomenda ${html(event.params.orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}`);
     await queueEmail(order.customer.email, `Encomenda confirmada ${event.params.orderId} · Mystic Essence`, body, `order-${event.params.orderId}-paid`);

@@ -28,7 +28,60 @@ service cloud.firestore {
       allow read, create, update, delete: if isAdmin();
     }
 
+    function validShippingCarrier(carrier) {
+      return carrier is map && carrier.keys().hasAll(['id', 'name', 'price', 'description'])
+        && carrier.keys().hasOnly(['id', 'name', 'price', 'description'])
+        && carrier.id is string && carrier.id.matches('^[a-zA-Z0-9_-]{1,80}$')
+        && carrier.name is string && carrier.name.size() > 0 && carrier.name.size() <= 80
+        && carrier.description is string && carrier.description.size() <= 160
+        && carrier.price is number && carrier.price >= 0 && carrier.price <= 999.99
+        && math.abs(carrier.price * 100 - math.round(carrier.price * 100)) < 0.000001;
+    }
+
+    function validShippingRate(rate) {
+      return rate is map && rate.keys().hasAll(['carriers', 'freeFrom'])
+        && rate.keys().hasOnly(['carriers', 'freeFrom'])
+        && rate.freeFrom is number && rate.freeFrom >= 0 && rate.freeFrom <= 99999.99
+        && math.abs(rate.freeFrom * 100 - math.round(rate.freeFrom * 100)) < 0.000001
+        && rate.carriers is list && rate.carriers.size() <= 10
+        && (rate.carriers.size() <= 0 || validShippingCarrier(rate.carriers[0]))
+        && (rate.carriers.size() <= 1 || validShippingCarrier(rate.carriers[1]))
+        && (rate.carriers.size() <= 2 || validShippingCarrier(rate.carriers[2]))
+        && (rate.carriers.size() <= 3 || validShippingCarrier(rate.carriers[3]))
+        && (rate.carriers.size() <= 4 || validShippingCarrier(rate.carriers[4]))
+        && (rate.carriers.size() <= 5 || validShippingCarrier(rate.carriers[5]))
+        && (rate.carriers.size() <= 6 || validShippingCarrier(rate.carriers[6]))
+        && (rate.carriers.size() <= 7 || validShippingCarrier(rate.carriers[7]))
+        && (rate.carriers.size() <= 8 || validShippingCarrier(rate.carriers[8]))
+        && (rate.carriers.size() <= 9 || validShippingCarrier(rate.carriers[9]));
+    }
+
+    match /settings/shipping {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['zones'])
+        && request.resource.data.zones is map
+        && request.resource.data.zones.keys().hasAll(['continental', 'islands', 'spain'])
+        && request.resource.data.zones.keys().hasOnly(['continental', 'islands', 'spain'])
+        && validShippingRate(request.resource.data.zones.continental)
+        && validShippingRate(request.resource.data.zones.islands)
+        && validShippingRate(request.resource.data.zones.spain);
+      allow delete: if false;
+    }
+
+    match /brands/{brandId} {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasAll(['name'])
+        && request.resource.data.keys().hasOnly(['name'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80;
+      allow delete: if false;
+    }
+
     match /reviews/{reviewId} {
+      // Reviews remain writable only through the verified-purchase function.
       allow read: if true;
       allow create, update, delete: if false;
     }

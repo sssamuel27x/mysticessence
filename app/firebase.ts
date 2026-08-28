@@ -24,6 +24,9 @@ import {
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
+import { validateProductImageFiles } from "./product-gallery";
+import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
+import { brandKey } from "./brand-catalogue";
 
 type PublicEnv = Record<string, string | undefined>;
 
@@ -128,6 +131,57 @@ function cleanData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+export function watchShippingSettings(callback: (settings: ShippingSettings) => void, onError: (error: Error) => void) {
+  if (!database) {
+    onError(new Error("Firebase não está configurado."));
+    return () => undefined;
+  }
+  return onSnapshot(doc(database, "settings", "shipping"), (snapshot) => {
+    const settings = snapshot.exists() ? normalizeShippingSettings(snapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS;
+    if (!isValidShippingSettings(settings)) {
+      onError(new Error("Os portes guardados são inválidos."));
+      return;
+    }
+    callback(settings);
+  }, onError);
+}
+
+export async function saveShippingSettings(zones: ShippingSettings) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  if (!isValidShippingSettings(zones)) throw new Error("Valores de portes inválidos.");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      setDoc(doc(database, "settings", "shipping"), { zones }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Sem confirmação do servidor. Verifique a ligação e reabra os portes antes de tentar novamente.")), 10000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function watchBrands(callback: (names: string[]) => void, onError: (error: Error) => void) {
+  if (!database) { onError(new Error("Firebase não está configurado.")); return () => undefined; }
+  return onSnapshot(collection(database, "brands"), (snapshot) => {
+    callback(snapshot.docs.map((item) => item.data().name).filter((name): name is string => typeof name === "string"));
+  }, onError);
+}
+
+export async function saveBrand(name: string) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      setDoc(doc(database, "brands", encodeURIComponent(brandKey(name))), { name }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Sem confirmação do servidor. Reabra as marcas antes de tentar novamente.")), 10000);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
 export function watchProducts<T>(callback: (products: T[]) => void) {
   if (!database) return () => undefined;
   return onSnapshot(query(collection(database, "products"), orderBy("name.pt")), (snapshot) => {
@@ -153,6 +207,7 @@ export async function seedProducts<T extends { id: string }>(products: T[]) {
 
 export async function uploadProductImage(productId: string, file: File) {
   if (!storage || !storageEnabled) throw new Error("O envio de imagens será ativado quando o Firebase Storage estiver disponível.");
+  if (validateProductImageFiles([file], 0)) throw new Error("Escolha uma imagem JPG, PNG ou WebP com menos de 5 MB.");
   const extension = file.name.split(".").pop()?.toLowerCase() || "jpg";
   const imageRef = ref(storage, `products/${productId}/${crypto.randomUUID()}.${extension}`);
   await uploadBytes(imageRef, file, { contentType: file.type });
@@ -227,9 +282,22 @@ export async function saveFavoriteFolders(uid: string, folders: Array<{ id: stri
   await Promise.all(folders.map((folder) => setDoc(doc(database, "profiles", uid, "favoriteFolders", folder.id), cleanData(folder))));
 }
 
+export type IfthenpayCheckoutResult = {
+  orderId: string;
+  amount: number;
+  method: "mbway" | "multibanco" | "payshop" | "card";
+  paymentStatus: "pending";
+  paymentUrl?: string;
+  entity?: string;
+  reference?: string;
+  requestId?: string;
+  expiresAt?: string;
+  message?: string;
+};
+
 export async function createCheckout(payload: Record<string, unknown>) {
   if (!functions) throw new Error("O pagamento real ainda não está configurado.");
-  const callable = httpsCallable<Record<string, unknown>, { orderId: string; paymentUrl: string }>(functions, "createCheckout");
+  const callable = httpsCallable<Record<string, unknown>, IfthenpayCheckoutResult>(functions, "createCheckout");
   return (await callable(payload)).data;
 }
 
