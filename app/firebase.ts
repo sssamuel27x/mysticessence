@@ -89,8 +89,12 @@ async function sessionFromUser(user: User): Promise<FirebaseSession> {
   };
 }
 
-export function watchSession(callback: (session: FirebaseSession | null) => void) {
+export function watchSession(
+  callback: (session: FirebaseSession | null) => void,
+  onPending: (uid: string | null) => void = () => undefined,
+) {
   if (!auth) {
+    onPending(null);
     callback(null);
     return () => undefined;
   }
@@ -101,6 +105,7 @@ export function watchSession(callback: (session: FirebaseSession | null) => void
     const currentGeneration = generation;
     stopProfile();
     stopProfile = () => undefined;
+    onPending(user?.uid ?? null);
     if (!user) {
       callback(null);
       return;
@@ -112,6 +117,7 @@ export function watchSession(callback: (session: FirebaseSession | null) => void
       return;
     }
     stopProfile = onSnapshot(doc(database, "profiles", user.uid), (snapshot) => {
+      if (currentGeneration !== generation || auth.currentUser?.uid !== user.uid) return;
       const profile = snapshot.data();
       callback({
         ...baseSession,
@@ -119,7 +125,9 @@ export function watchSession(callback: (session: FirebaseSession | null) => void
         isInfluencer: profile?.isInfluencer === true,
         influencerCouponCode: typeof profile?.influencerCouponCode === "string" ? profile.influencerCouponCode : null,
       });
-    }, () => callback(baseSession));
+    }, () => {
+      if (currentGeneration === generation && auth.currentUser?.uid === user.uid) callback(baseSession);
+    });
   });
   return () => {
     generation += 1;

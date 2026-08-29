@@ -3913,6 +3913,57 @@ select {
   min-height: 680px;
 }
 
+.account-auth-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  width: min(100%, 820px);
+  min-height: 420px;
+  margin-inline: auto;
+  padding: 64px 28px;
+  text-align: left;
+}
+
+.account-auth-status h1 {
+  margin: 8px 0 10px;
+  font-family: var(--font-display);
+  font-size: 52px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.account-auth-status p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.auth-spinner {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 2px solid rgba(214, 171, 75, 0.22);
+  border-top-color: var(--gold-2);
+  border-radius: 50%;
+  animation: auth-spin 0.75s linear infinite;
+}
+
+@keyframes auth-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 620px) {
+  .account-auth-status {
+    align-items: flex-start;
+    min-height: 360px;
+    padding-top: 72px;
+  }
+
+  .account-auth-status h1 {
+    font-size: 38px;
+  }
+}
+
 .account-intro h1,
 .customer-account h1,
 .admin-heading h1 {

@@ -1029,6 +1029,7 @@ function Storefront() {
   const [catalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authTransition, setAuthTransition] = useState(false);
   const [pendingFavoritesPage, setPendingFavoritesPage] = useState(false);
   const [favoritesOwner, setFavoritesOwner] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -1120,6 +1121,17 @@ function Storefront() {
   useEffect(() => watchSession((nextSession) => {
     setSession(nextSession);
     setAuthReady(true);
+    setAuthTransition(false);
+  }, () => {
+    setAuthReady(false);
+    setSession(null);
+    setOrders([]);
+    setProfiles([]);
+    setInfluencerUses([]);
+    setFavoriteFolders([]);
+    setFavoritesOwner(null);
+    setFavoriteProductId(null);
+    remoteFavorites.current = "";
   }), []);
 
   useEffect(() => {
@@ -1128,6 +1140,18 @@ function Storefront() {
     window.history.replaceState({}, "", "/conta");
     applyRoute({ view: "account", listing: "all", profileFilter: null });
   }, [view, authReady, session]);
+
+  useEffect(() => {
+    if (!authReady || !session) return;
+    if (pendingFavoritesPage) {
+      setPendingFavoritesPage(false);
+      navigate("/conta/favoritos", { view: "favorites", listing, profileFilter });
+      return;
+    }
+    if (view === "account" && !pendingFavoriteId && session.role === "admin") {
+      navigate("/admin", { view: "admin", listing, profileFilter });
+    }
+  }, [authReady, session?.uid, session?.role, pendingFavoritesPage, pendingFavoriteId, view]);
 
   useEffect(() => {
     if (!firebaseEnabled) return;
@@ -1159,17 +1183,26 @@ function Storefront() {
   }, [session]);
 
   useEffect(() => {
-    if (!session || session.role !== "admin" || !firebaseEnabled) return;
+    if (!session || session.role !== "admin" || !firebaseEnabled) {
+      setCoupons([]);
+      return;
+    }
     return watchCoupons<Coupon>(setCoupons);
   }, [session]);
 
   useEffect(() => {
-    if (!session || session.role !== "admin" || !firebaseEnabled) return;
+    if (!session || session.role !== "admin" || !firebaseEnabled) {
+      setProfiles([]);
+      return;
+    }
     return watchProfiles<CustomerProfile>(setProfiles);
   }, [session]);
 
   useEffect(() => {
-    if (!session?.isInfluencer || !firebaseEnabled) return;
+    if (!session?.isInfluencer || !firebaseEnabled) {
+      setInfluencerUses([]);
+      return;
+    }
     return watchInfluencerCouponUses<InfluencerCouponUse>(session.uid, setInfluencerUses);
   }, [session?.uid, session?.isInfluencer]);
 
@@ -1205,6 +1238,20 @@ function Storefront() {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 2200);
+  }
+
+  async function handleLogout() {
+    if (authTransition) return;
+    setAuthTransition(true);
+    setAuthReady(false);
+    navigate("/conta", { view: "account", listing, profileFilter });
+    try {
+      await logoutFirebase();
+    } catch {
+      setAuthReady(true);
+      setAuthTransition(false);
+      showToast(lang === "pt" ? "Não foi possível terminar a sessão. Tente novamente." : "Could not sign out. Please try again.");
+    }
   }
 
   function navigate(path: string, route: AppRoute) {
@@ -1382,6 +1429,7 @@ function Storefront() {
         {(view === "account" || (view === "favorites" && session)) && (
           <AccountPage
             favoritesOnly={view === "favorites"}
+            authReady={authReady}
             favoritesReady={Boolean(session && favoritesOwner === session.uid)}
             lang={lang}
             session={session}
@@ -1391,21 +1439,7 @@ function Storefront() {
             favoriteFolders={favoriteFolders}
             setFavoriteFolders={setFavoriteFolders}
             onProduct={openProduct}
-            onSession={(nextSession) => {
-              setSession(nextSession);
-              if (pendingFavoritesPage) {
-                setPendingFavoritesPage(false);
-                navigate("/conta/favoritos", { view: "favorites", listing, profileFilter });
-              } else if (!pendingFavoriteId && nextSession.role === "admin") {
-                navigate("/admin", { view: "admin", listing, profileFilter });
-              }
-            }}
-            onLogout={() => {
-              void logoutFirebase();
-              setSession(null);
-              setFavoriteFolders([]);
-              navigate("/conta", { view: "account", listing, profileFilter });
-            }}
+            onLogout={handleLogout}
             onShop={openHome}
           />
         )}
@@ -1422,11 +1456,7 @@ function Storefront() {
             profiles={profiles}
             session={session}
             onShop={openHome}
-            onLogout={() => {
-              void logoutFirebase();
-              setSession(null);
-              navigate("/conta", { view: "account", listing, profileFilter });
-            }}
+            onLogout={handleLogout}
           />
         )}
 
@@ -2767,6 +2797,7 @@ function ProductVisual({ product, hero = false, compact = false }: { product: Pr
 
 function AccountPage({
   favoritesOnly = false,
+  authReady,
   favoritesReady,
   lang,
   session,
@@ -2776,11 +2807,11 @@ function AccountPage({
   favoriteFolders,
   setFavoriteFolders,
   onProduct,
-  onSession,
   onLogout,
   onShop,
 }: {
   favoritesOnly?: boolean;
+  authReady: boolean;
   favoritesReady: boolean;
   lang: Lang;
   session: Session | null;
@@ -2790,8 +2821,7 @@ function AccountPage({
   favoriteFolders: FavoriteFolder[];
   setFavoriteFolders: Dispatch<SetStateAction<FavoriteFolder[]>>;
   onProduct: (id: string) => void;
-  onSession: (session: Session) => void;
-  onLogout: () => void;
+  onLogout: () => Promise<void>;
   onShop: () => void;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -2846,10 +2876,10 @@ function AccountPage({
     setAuthError("");
     try {
       if (!firebaseEnabled) throw new Error(lang === "pt" ? "A ligação Firebase ainda não está configurada neste ambiente." : "Firebase is not configured in this environment yet.");
-      onSession(mode === "login" ? await loginWithEmail(email, password) : await registerWithEmail(name, email, password));
+      if (mode === "login") await loginWithEmail(email, password);
+      else await registerWithEmail(name, email, password);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível entrar." : "Could not sign in."));
-    } finally {
       setAuthBusy(false);
     }
   }
@@ -2858,12 +2888,24 @@ function AccountPage({
     setAuthBusy(true);
     setAuthError("");
     try {
-      onSession(await loginWithGoogle());
+      await loginWithGoogle();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível entrar com Google." : "Could not sign in with Google."));
-    } finally {
       setAuthBusy(false);
     }
+  }
+
+  if (!authReady) {
+    return (
+      <section className="account-auth-status" role="status" aria-live="polite">
+        <span className="auth-spinner" aria-hidden="true" />
+        <div>
+          <span className="eyebrow">{lang === "pt" ? "Conta segura" : "Secure account"}</span>
+          <h1>{lang === "pt" ? "A verificar a sessão" : "Checking your session"}</h1>
+          <p>{lang === "pt" ? "Estamos a confirmar a sua conta e os respetivos acessos." : "We are confirming your account and its permissions."}</p>
+        </div>
+      </section>
+    );
   }
 
   if (session) {
@@ -2890,7 +2932,7 @@ function AccountPage({
           </div>
           <div className="account-actions">
             <button className="ghost-button" onClick={onShop}>{copy.shop}</button>
-            <button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button>
+            <button className="icon-text-button" onClick={() => void onLogout()} disabled={authBusy}><LogOut size={16} />{copy.logout}</button>
           </div>
         </header>
 
@@ -3105,7 +3147,7 @@ function AdminPage({
   profiles: CustomerProfile[];
   session: Session;
   onShop: () => void;
-  onLogout: () => void;
+  onLogout: () => Promise<void>;
 }) {
   const emptyDraft = () => ({ name: "", brand: "", descriptionPt: "", descriptionEn: "", price: "", volume: "100ml", category: "Unissexo" as Product["category"], scentProfile: "fresh" as ScentProfile, tag: "stock" as Product["tag"], isNew: false, bestSeller: false, promotion: false, discount: "", endsAt: toDateTimeInput() });
   const defaultDraftVariants = (): DraftVariant[] => [
@@ -3493,7 +3535,7 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Preços dos decants" : "Decant prices"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Preços dos decants" : "Decant prices"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       {shippingOpen && <ShippingSettingsDialog lang={lang} onClose={() => setShippingOpen(false)} />}
