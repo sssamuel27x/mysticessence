@@ -12,7 +12,6 @@ import { SHIPPING_ZONE_IDS, getShippingCost, type ShippingZone } from "../functi
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import {
   createCheckout,
-  createPendingOrder,
   type IfthenpayCheckoutResult,
   firebaseEnabled,
   paymentsEnabled,
@@ -27,6 +26,7 @@ import {
   saveDecantPricing,
   saveFavoriteFolders,
   saveProduct as saveFirebaseProduct,
+  setInfluencerAccount,
   seedProducts,
   submitReview as submitFirebaseReview,
   subscribeToRestock,
@@ -36,7 +36,9 @@ import {
   watchCoupons,
   watchDecantPricing,
   watchFavoriteFolders,
+  watchInfluencerCouponUses,
   watchOrders,
+  watchProfiles,
   watchProducts,
   watchReviews,
   watchSession,
@@ -100,7 +102,7 @@ type View = "home" | "listing" | "product" | "checkout" | "account" | "favorites
 type ListingKind = "all" | "new" | "best" | "sale" | "decants" | "men" | "women" | "unisex" | "other";
 type ScentProfile = "fresh" | "fruity" | "floral" | "sweet" | "woody";
 type PaymentMethod = "mbway" | "multibanco" | "payshop" | "card";
-type Session = { uid: string; name: string; email: string; role: "customer" | "admin" };
+type Session = { uid: string; name: string; email: string; role: "customer" | "admin"; isInfluencer?: boolean; influencerCouponCode?: string | null };
 type OrderStatus = "received" | "preparing" | "shipped" | "delivered";
 type ProductAudience = "men" | "women" | "unisex";
 
@@ -269,7 +271,25 @@ type ProductReview = {
   updatedAt?: string;
 };
 type FavoriteFolder = { id: string; name: string; productIds: string[] };
-type Coupon = { id: string; code: string; discount: number; createdAt: string };
+type Coupon = { id: string; code: string; discount: number; createdAt: string; influencerUid?: string; influencerEmail?: string; influencerName?: string };
+type CustomerProfile = {
+  uid: string;
+  name?: string;
+  email: string;
+  createdAt?: string;
+  isInfluencer?: boolean;
+  influencerCouponCode?: string;
+};
+type InfluencerCouponUse = {
+  id: string;
+  influencerUid: string;
+  couponCode: string;
+  orderId: string;
+  usedAt: string;
+  month: string;
+  discountAmount: number;
+  orderTotal: number;
+};
 type Order = {
   id: string;
   createdAt: string;
@@ -1013,6 +1033,8 @@ function Storefront() {
   const [favoritesOwner, setFavoritesOwner] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [profiles, setProfiles] = useState<CustomerProfile[]>([]);
+  const [influencerUses, setInfluencerUses] = useState<InfluencerCouponUse[]>([]);
   const [favoriteFolders, setFavoriteFolders] = useState<FavoriteFolder[]>([]);
   const [favoriteProductId, setFavoriteProductId] = useState<string | null>(null);
   const [pendingFavoriteId, setPendingFavoriteId] = useState<string | null>(null);
@@ -1140,6 +1162,16 @@ function Storefront() {
     if (!session || session.role !== "admin" || !firebaseEnabled) return;
     return watchCoupons<Coupon>(setCoupons);
   }, [session]);
+
+  useEffect(() => {
+    if (!session || session.role !== "admin" || !firebaseEnabled) return;
+    return watchProfiles<CustomerProfile>(setProfiles);
+  }, [session]);
+
+  useEffect(() => {
+    if (!session?.isInfluencer || !firebaseEnabled) return;
+    return watchInfluencerCouponUses<InfluencerCouponUse>(session.uid, setInfluencerUses);
+  }, [session?.uid, session?.isInfluencer]);
 
   useEffect(() => {
     setFavoriteFolders([]);
@@ -1342,10 +1374,7 @@ function Storefront() {
             lang={lang}
             cart={cart}
             coupons={coupons}
-            onCreateOrder={(order) => {
-              setOrders((items) => [order, ...items]);
-              setCart([]);
-            }}
+            onCheckoutStarted={() => setCart([])}
             onBack={openHome}
           />
         )}
@@ -1358,6 +1387,7 @@ function Storefront() {
             session={session}
             products={catalog}
             orders={orders}
+            influencerUses={influencerUses}
             favoriteFolders={favoriteFolders}
             setFavoriteFolders={setFavoriteFolders}
             onProduct={openProduct}
@@ -1389,6 +1419,7 @@ function Storefront() {
             setOrders={setOrders}
             coupons={coupons}
             setCoupons={setCoupons}
+            profiles={profiles}
             session={session}
             onShop={openHome}
             onLogout={() => {
@@ -2741,6 +2772,7 @@ function AccountPage({
   session,
   products,
   orders,
+  influencerUses,
   favoriteFolders,
   setFavoriteFolders,
   onProduct,
@@ -2754,6 +2786,7 @@ function AccountPage({
   session: Session | null;
   products: Product[];
   orders: Order[];
+  influencerUses: InfluencerCouponUse[];
   favoriteFolders: FavoriteFolder[];
   setFavoriteFolders: Dispatch<SetStateAction<FavoriteFolder[]>>;
   onProduct: (id: string) => void;
@@ -2836,6 +2869,10 @@ function AccountPage({
   if (session) {
     const customerOrders = orders.filter((order) => order.customer.email.toLowerCase() === session.email.toLowerCase());
     const favoriteCount = new Set(favoriteFolders.flatMap((folder) => folder.productIds)).size;
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const currentMonthUses = influencerUses.filter((use) => use.month === currentMonth);
+    const monthCommission = currentMonthUses.reduce((sum, use) => sum + use.discountAmount, 0);
+    const lifetimeCommission = influencerUses.reduce((sum, use) => sum + use.discountAmount, 0);
     const createFolder = () => {
       const name = folderName.trim();
       if (!name || !favoritesReady) return;
@@ -2843,11 +2880,11 @@ function AccountPage({
       setFolderName("");
     };
     return (
-      <section className={`account-hub ${favoritesOnly ? "favorites-page" : ""}`}>
+      <section className={`account-hub ${favoritesOnly ? "favorites-page" : ""} ${session.isInfluencer ? "influencer-account" : ""}`}>
         <header className="account-hub-header">
-          <div className="account-profile-mark">{favoritesOnly ? <Heart size={28} /> : <User size={28} />}</div>
+          <div className="account-profile-mark">{favoritesOnly ? <Heart size={28} /> : session.isInfluencer ? <TicketPercent size={28} /> : <User size={28} />}</div>
           <div>
-            <span className="eyebrow">{copy.profile}</span>
+            <span className="eyebrow">{session.isInfluencer && !favoritesOnly ? (lang === "pt" ? "Área de influencer" : "Influencer area") : copy.profile}</span>
             <h1>{favoritesOnly ? (lang === "pt" ? "Os meus favoritos" : "My favourites") : `${copy.hello}, ${session.name}`}</h1>
             <p>{session.email}</p>
           </div>
@@ -2858,10 +2895,35 @@ function AccountPage({
         </header>
 
         {!favoritesOnly && <div className="account-overview">
-          <article><Heart size={20} /><span>{lang === "pt" ? "Favoritos" : "Favourites"}</span><strong>{favoriteCount}</strong></article>
-          <article><ShoppingBag size={20} /><span>{lang === "pt" ? "Encomendas" : "Orders"}</span><strong>{customerOrders.length}</strong></article>
-          <article><Tag size={20} /><span>{lang === "pt" ? "Cupões" : "Coupons"}</span><strong>2</strong></article>
+          {session.isInfluencer ? <>
+            <article><TicketPercent size={20} /><span>{lang === "pt" ? "Usos este mês" : "Uses this month"}</span><strong>{currentMonthUses.length}</strong></article>
+            <article><ReceiptText size={20} /><span>{lang === "pt" ? "Comissão do mês" : "Monthly commission"}</span><strong>{price(monthCommission, lang)}</strong></article>
+            <article><History size={20} /><span>{lang === "pt" ? "Total acumulado" : "Lifetime total"}</span><strong>{price(lifetimeCommission, lang)}</strong></article>
+          </> : <>
+            <article><Heart size={20} /><span>{lang === "pt" ? "Favoritos" : "Favourites"}</span><strong>{favoriteCount}</strong></article>
+            <article><ShoppingBag size={20} /><span>{lang === "pt" ? "Encomendas" : "Orders"}</span><strong>{customerOrders.length}</strong></article>
+            <article><Tag size={20} /><span>{lang === "pt" ? "Cupões" : "Coupons"}</span><strong>2</strong></article>
+          </>}
         </div>}
+
+        {session.isInfluencer && !favoritesOnly && (
+          <section className="influencer-dashboard account-panel">
+            <header><TicketPercent size={21} /><div><h2>{lang === "pt" ? "Desempenho do meu cupão" : "My coupon performance"}</h2><p>{lang === "pt" ? "Só aparecem compras cujo pagamento foi confirmado." : "Only purchases with confirmed payment are shown."}</p></div></header>
+            <div className="influencer-coupon-banner">
+              <span>{lang === "pt" ? "Cupão associado" : "Assigned coupon"}</span>
+              <strong>{session.influencerCouponCode || (lang === "pt" ? "Por associar" : "Not assigned")}</strong>
+            </div>
+            {influencerUses.length === 0 ? (
+              <div className="account-empty-state"><ReceiptText size={24} /><strong>{lang === "pt" ? "Ainda não existem utilizações pagas" : "No paid uses yet"}</strong><p>{lang === "pt" ? "Quando uma compra com o seu cupão for paga, ficará registada aqui." : "When a purchase using your coupon is paid, it will appear here."}</p></div>
+            ) : (
+              <div className="influencer-use-list">
+                <div className="influencer-use-heading"><span>{lang === "pt" ? "Encomenda" : "Order"}</span><span>{lang === "pt" ? "Data" : "Date"}</span><span>{lang === "pt" ? "Cupão" : "Coupon"}</span><span>{lang === "pt" ? "Valor atribuído" : "Commission"}</span></div>
+                {influencerUses.map((use) => <article key={use.id}><strong>{use.orderId}</strong><time dateTime={use.usedAt}>{new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium" }).format(new Date(use.usedAt))}</time><span>{use.couponCode}</span><strong>{price(use.discountAmount, lang)}</strong></article>)}
+              </div>
+            )}
+            <footer><span>{lang === "pt" ? "Total a acertar este mês" : "Total due this month"}</span><strong>{price(monthCommission, lang)}</strong></footer>
+          </section>
+        )}
 
         <div className="account-dashboard-grid">
           <section className="account-panel favorites-panel">
@@ -3028,6 +3090,7 @@ function AdminPage({
   setOrders,
   coupons,
   setCoupons,
+  profiles,
   session,
   onShop,
   onLogout,
@@ -3039,6 +3102,7 @@ function AdminPage({
   setOrders: Dispatch<SetStateAction<Order[]>>;
   coupons: Coupon[];
   setCoupons: Dispatch<SetStateAction<Coupon[]>>;
+  profiles: CustomerProfile[];
   session: Session;
   onShop: () => void;
   onLogout: () => void;
@@ -3062,6 +3126,7 @@ function AdminPage({
   const [pendingStatuses, setPendingStatuses] = useState<Record<string, OrderStatus>>({});
   const [adminBusy, setAdminBusy] = useState(false);
   const [couponOpen, setCouponOpen] = useState(false);
+  const [influencersOpen, setInfluencersOpen] = useState(false);
   const [shippingOpen, setShippingOpen] = useState(false);
   const [brandsOpen, setBrandsOpen] = useState(false);
   const [decantPricingOpen, setDecantPricingOpen] = useState(false);
@@ -3386,6 +3451,11 @@ function AdminPage({
   }
 
   async function deleteCoupon(code: string) {
+    const assigned = coupons.find((coupon) => coupon.code === code)?.influencerUid;
+    if (assigned) {
+      setCouponError(lang === "pt" ? "Retire primeiro este cupão da conta influencer associada." : "First unlink this coupon from its influencer account.");
+      return;
+    }
     setCoupons((items) => items.filter((coupon) => coupon.code !== code));
     if (firebaseEnabled) await removeFirebaseCoupon(code);
   }
@@ -3423,7 +3493,7 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Preços dos decants" : "Decant prices"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Preços dos decants" : "Decant prices"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       {shippingOpen && <ShippingSettingsDialog lang={lang} onClose={() => setShippingOpen(false)} />}
@@ -3607,6 +3677,8 @@ function AdminPage({
         </>
       )}
 
+      {influencersOpen && <InfluencerManager lang={lang} profiles={profiles} coupons={coupons} onClose={() => setInfluencersOpen(false)} />}
+
       <section className="admin-orders">
         <header className="admin-orders-heading">
           <div>{showArchive ? <Archive size={21} /> : <ClipboardList size={21} />}<div><h2>{showArchive ? copy.archiveTitle : copy.ordersTitle}</h2><p>{showArchive ? copy.archiveSub : copy.ordersSub}</p></div></div>
@@ -3700,19 +3772,87 @@ function AdminPage({
   );
 }
 
+function InfluencerManager({
+  lang,
+  profiles,
+  coupons,
+  onClose,
+}: {
+  lang: Lang;
+  profiles: CustomerProfile[];
+  coupons: Coupon[];
+  onClose: () => void;
+}) {
+  type InfluencerDraft = { isInfluencer: boolean; couponCode: string };
+  const [query, setQuery] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, InfluencerDraft>>({});
+  const [savingUid, setSavingUid] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleProfiles = profiles.filter((profile) => !normalizedQuery || `${profile.name ?? ""} ${profile.email}`.toLowerCase().includes(normalizedQuery));
+  const getDraft = (profile: CustomerProfile): InfluencerDraft => drafts[profile.uid] ?? {
+    isInfluencer: profile.isInfluencer === true,
+    couponCode: profile.influencerCouponCode ?? "",
+  };
+
+  function updateDraft(profile: CustomerProfile, changes: Partial<InfluencerDraft>) {
+    setDrafts((current) => ({ ...current, [profile.uid]: { ...getDraft(profile), ...changes } }));
+    setMessage("");
+  }
+
+  async function saveProfile(profile: CustomerProfile) {
+    const draft = getDraft(profile);
+    if (draft.isInfluencer && !draft.couponCode) {
+      setMessage(lang === "pt" ? "Escolha um cupão antes de guardar." : "Choose a coupon before saving.");
+      return;
+    }
+    setSavingUid(profile.uid);
+    setMessage("");
+    try {
+      await setInfluencerAccount({ uid: profile.uid, isInfluencer: draft.isInfluencer, couponCode: draft.isInfluencer ? draft.couponCode : null });
+      setMessage(lang === "pt" ? `Conta ${profile.email} atualizada.` : `${profile.email} updated.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível atualizar a conta." : "Could not update the account."));
+    } finally {
+      setSavingUid(null);
+    }
+  }
+
+  return <>
+    <button className="modal-backdrop" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"} />
+    <section className="influencer-manager" role="dialog" aria-modal="true" aria-labelledby="influencer-manager-title">
+      <header><div><User size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="influencer-manager-title">{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</h2></div></div><button type="button" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={20} /></button></header>
+      <div className="influencer-manager-search"><Search size={18} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={lang === "pt" ? "Pesquisar por nome ou email" : "Search by name or email"} /></div>
+      <p className="influencer-manager-help">{lang === "pt" ? "Associe um cupão exclusivo a cada influencer. Apenas pagamentos confirmados geram comissão." : "Assign an exclusive coupon to each influencer. Only confirmed payments generate commission."}</p>
+      {message && <p className="influencer-manager-message" role="status">{message}</p>}
+      <div className="influencer-profile-list">
+        {visibleProfiles.length === 0 ? <div className="account-empty-state"><User size={24} /><strong>{lang === "pt" ? "Nenhuma conta encontrada" : "No accounts found"}</strong></div> : visibleProfiles.map((profile) => {
+          const draft = getDraft(profile);
+          return <article className={draft.isInfluencer ? "is-influencer" : ""} key={profile.uid}>
+            <div className="influencer-profile-identity"><span>{(profile.name || profile.email).slice(0, 1).toUpperCase()}</span><div><strong>{profile.name || (lang === "pt" ? "Conta sem nome" : "Unnamed account")}</strong><small>{profile.email}</small></div></div>
+            <label className="influencer-toggle"><input type="checkbox" checked={draft.isInfluencer} onChange={(event) => updateDraft(profile, { isInfluencer: event.target.checked, couponCode: event.target.checked ? draft.couponCode : "" })} /><i><Check size={13} /></i><b>{lang === "pt" ? "É influencer?" : "Is influencer?"}</b></label>
+            {draft.isInfluencer && <label className="field influencer-coupon-select"><span>{lang === "pt" ? "Cupão associado" : "Assigned coupon"}</span><select value={draft.couponCode} onChange={(event) => updateDraft(profile, { couponCode: event.target.value })} required><option value="">{lang === "pt" ? "Selecionar cupão" : "Select coupon"}</option>{coupons.map((coupon) => <option key={coupon.code} value={coupon.code} disabled={Boolean(coupon.influencerUid && coupon.influencerUid !== profile.uid)}>{coupon.code} · {coupon.discount}%{coupon.influencerUid && coupon.influencerUid !== profile.uid ? (lang === "pt" ? " (já associado)" : " (assigned)") : ""}</option>)}</select></label>}
+            <button className="ghost-button influencer-save" type="button" onClick={() => void saveProfile(profile)} disabled={savingUid === profile.uid || (draft.isInfluencer && !draft.couponCode)}><Save size={15} />{savingUid === profile.uid ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Guardar" : "Save")}</button>
+          </article>;
+        })}
+      </div>
+    </section>
+  </>;
+}
+
 function CheckoutPage({
   t,
   lang,
   cart,
   coupons,
-  onCreateOrder,
+  onCheckoutStarted,
   onBack,
 }: {
   t: (typeof COPY)[Lang];
   lang: Lang;
   cart: CartItem[];
   coupons: Coupon[];
-  onCreateOrder: (order: Order) => void;
+  onCheckoutStarted: () => void;
   onBack: () => void;
 }) {
   const [payment, setPayment] = useState<PaymentMethod>("mbway");
@@ -3825,7 +3965,7 @@ function CheckoutPage({
     setCheckoutBusy(true);
     setCheckoutError("");
     try {
-      if (firebaseEnabled) {
+      if (firebaseEnabled && paymentsEnabled) {
         const payload = {
           lang,
           paymentMethod: payment,
@@ -3837,29 +3977,19 @@ function CheckoutPage({
           couponCode: appliedCoupon?.code,
           items: cart.map((item) => ({ productId: item.id, volume: item.volume, quantity: item.qty })),
         };
-        if (paymentsEnabled) {
-          const result = await createCheckout(payload);
-          if (result.paymentUrl) {
-            window.location.assign(result.paymentUrl);
-            return;
-          }
-          const pendingOrder = { ...order, id: result.orderId, paymentMethod: result.method, paymentStatus: result.paymentStatus };
-          setCheckoutResult(result);
-          onCreateOrder(pendingOrder);
-          setSubmittedOrder(pendingOrder);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+        const result = await createCheckout(payload);
+        const pendingOrder = { ...order, id: result.orderId, paymentMethod: result.method, paymentStatus: result.paymentStatus };
+        onCheckoutStarted();
+        if (result.paymentUrl) {
+          window.location.assign(result.paymentUrl);
           return;
         }
-        const result = await createPendingOrder(payload);
-        const pendingOrder = { ...order, id: result.orderId };
-        onCreateOrder(pendingOrder);
+        setCheckoutResult(result);
         setSubmittedOrder(pendingOrder);
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
-      onCreateOrder(order);
-      setSubmittedOrder(order);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      throw new Error(lang === "pt" ? "Os pagamentos não estão disponíveis. Nenhuma encomenda foi criada." : "Payments are unavailable. No order was created.");
     } catch (error) {
       setCheckoutError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível iniciar o pagamento." : "Could not start payment."));
     } finally {
@@ -3873,7 +4003,7 @@ function CheckoutPage({
       <section className={`checkout-success ${successful ? "" : "payment-return-warning"}`}>
         {successful ? <BadgeCheck size={52} /> : <CreditCard size={52} />}
         <span className="eyebrow">IFTHENPAY · Mystic Essence</span>
-        <h1>{successful ? (lang === "pt" ? "Pagamento recebido" : "Payment received") : (lang === "pt" ? "Pagamento não concluído" : "Payment not completed")}</h1>
+        <h1>{successful ? (lang === "pt" ? "Pagamento em validação" : "Payment being verified") : (lang === "pt" ? "Pagamento não concluído" : "Payment not completed")}</h1>
         <p>{successful
           ? (lang === "pt" ? "Estamos a confirmar o pagamento. Receberá um email assim que a encomenda ficar confirmada." : "We are confirming your payment. You will receive an email as soon as the order is confirmed.")
           : (lang === "pt" ? "O pagamento foi cancelado ou não pôde ser concluído. Não foi feita uma nova cobrança." : "The payment was cancelled or could not be completed. No new charge was made.")}</p>
@@ -3895,7 +4025,11 @@ function CheckoutPage({
       <section className="checkout-success">
         <BadgeCheck size={52} />
         <span className="eyebrow">IFTHENPAY · Mystic Essence</span>
-        <h1>{checkoutResult?.method === "mbway" ? (lang === "pt" ? "Confirme no MB WAY" : "Confirm in MB WAY") : copy.successTitle}</h1>
+        <h1>
+          {checkoutResult?.method === "mbway"
+            ? (lang === "pt" ? "Confirme no MB WAY" : "Confirm in MB WAY")
+            : (lang === "pt" ? "Pagamento pendente" : "Payment pending")}
+        </h1>
         <p>{instruction}</p>
         <div className="ifthenpay-instructions">
           <span><small>{lang === "pt" ? "Encomenda" : "Order"}</small><strong>{submittedOrder.id}</strong></span>

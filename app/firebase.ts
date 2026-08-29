@@ -75,6 +75,8 @@ export type FirebaseSession = {
   name: string;
   email: string;
   role: "customer" | "admin";
+  isInfluencer?: boolean;
+  influencerCouponCode?: string | null;
 };
 
 async function sessionFromUser(user: User): Promise<FirebaseSession> {
@@ -92,12 +94,50 @@ export function watchSession(callback: (session: FirebaseSession | null) => void
     callback(null);
     return () => undefined;
   }
-  return onAuthStateChanged(auth, async (user) => callback(user ? await sessionFromUser(user) : null));
+  let stopProfile: () => void = () => undefined;
+  let generation = 0;
+  const stopAuth = onAuthStateChanged(auth, async (user) => {
+    generation += 1;
+    const currentGeneration = generation;
+    stopProfile();
+    stopProfile = () => undefined;
+    if (!user) {
+      callback(null);
+      return;
+    }
+    const baseSession = await sessionFromUser(user);
+    if (currentGeneration !== generation) return;
+    if (!database) {
+      callback(baseSession);
+      return;
+    }
+    stopProfile = onSnapshot(doc(database, "profiles", user.uid), (snapshot) => {
+      const profile = snapshot.data();
+      callback({
+        ...baseSession,
+        name: typeof profile?.name === "string" && profile.name.trim() ? profile.name : baseSession.name,
+        isInfluencer: profile?.isInfluencer === true,
+        influencerCouponCode: typeof profile?.influencerCouponCode === "string" ? profile.influencerCouponCode : null,
+      });
+    }, () => callback(baseSession));
+  });
+  return () => {
+    generation += 1;
+    stopProfile();
+    stopAuth();
+  };
 }
 
 export async function loginWithEmail(email: string, password: string) {
   if (!auth) throw new Error("Firebase ainda não está configurado.");
   const result = await signInWithEmailAndPassword(auth, email, password);
+  if (database) {
+    await setDoc(doc(database, "profiles", result.user.uid), {
+      name: result.user.displayName || result.user.email?.split("@")[0] || "Cliente",
+      email: result.user.email,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  }
   return sessionFromUser(result.user);
 }
 
@@ -236,7 +276,35 @@ export function watchOrders<T>(session: FirebaseSession, callback: (orders: T[])
   const ordersQuery = session.role === "admin"
     ? query(collection(database, "orders"), orderBy("createdAt", "desc"))
     : query(collection(database, "orders"), where("customerUid", "==", session.uid), orderBy("createdAt", "desc"));
-  return onSnapshot(ordersQuery, (snapshot) => callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as T))));
+  return onSnapshot(ordersQuery, (snapshot) => callback(snapshot.docs
+    .filter((item) => item.data().paymentStatus === "paid")
+    .map((item) => ({ id: item.id, ...item.data() } as T))));
+}
+
+export function watchProfiles<T>(callback: (profiles: T[]) => void) {
+  if (!database) return () => undefined;
+  return onSnapshot(collection(database, "profiles"), (snapshot) => {
+    const profiles = snapshot.docs
+      .map((item) => ({ uid: item.id, ...item.data() } as unknown as T & { email?: string }))
+      .sort((a, b) => String(a.email ?? "").localeCompare(String(b.email ?? ""), "pt"));
+    callback(profiles);
+  }, (error) => console.error("Não foi possível acompanhar as contas.", error));
+}
+
+export function watchInfluencerCouponUses<T>(uid: string, callback: (uses: T[]) => void) {
+  if (!database) return () => undefined;
+  return onSnapshot(query(collection(database, "influencerCouponUses"), where("influencerUid", "==", uid)), (snapshot) => {
+    const uses = snapshot.docs
+      .map((item) => ({ id: item.id, ...item.data() } as unknown as T & { usedAt?: string }))
+      .sort((a, b) => String(b.usedAt ?? "").localeCompare(String(a.usedAt ?? "")));
+    callback(uses);
+  }, (error) => console.error("Não foi possível acompanhar os usos do cupão.", error));
+}
+
+export async function setInfluencerAccount(payload: { uid: string; isInfluencer: boolean; couponCode: string | null }) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<typeof payload, { uid: string; isInfluencer: boolean; couponCode: string | null }>(functions, "setInfluencerAccount");
+  return (await callable(payload)).data;
 }
 
 export async function updateOrder(id: string, data: Record<string, unknown>) {

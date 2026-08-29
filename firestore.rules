@@ -121,6 +121,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /influencerCouponUses/{useId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.influencerUid == request.auth.uid);
+      // Commission entries are created only after a verified payment callback.
+      allow create, update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

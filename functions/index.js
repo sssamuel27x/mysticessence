@@ -15,6 +15,7 @@ const ifthenpayCardKey = defineSecret("IFTHENPAY_CARD_KEY");
 const callbackKey = defineSecret("IFTHENPAY_CALLBACK_KEY");
 const ownerEmail = defineSecret("OWNER_EMAIL");
 const publicSiteUrl = defineString("PUBLIC_SITE_URL", { default: "http://localhost:3000" });
+const adminAccountUid = "bFGr8AtlSGQTDZ9Nel9BVXB0csC2";
 
 const currency = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
 const shippingZones = {
@@ -25,6 +26,13 @@ const shippingZones = {
 
 function text(value, max = 500) {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function requireAdmin(request) {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Inicie sessão como administrador.");
+  if (request.auth.token.admin !== true && request.auth.uid !== adminAccountUid) {
+    throw new HttpsError("permission-denied", "Apenas o administrador pode gerir influencers.");
+  }
 }
 
 function html(value) {
@@ -364,8 +372,7 @@ async function restoreReservedInventory(orderId, order) {
 }
 
 exports.createPendingOrder = onCall({ region }, async (request) => {
-  const { orderId } = await createOrderRecord(request, "pending-payment");
-  return { orderId };
+  throw new HttpsError("failed-precondition", "Os pagamentos não estão disponíveis. Nenhuma encomenda foi criada.");
 });
 
 exports.validateCoupon = onCall({ region }, async (request) => {
@@ -376,6 +383,65 @@ exports.validateCoupon = onCall({ region }, async (request) => {
   const discount = Math.min(95, Math.max(1, Math.trunc(Number(snapshot.data().discount) || 0)));
   if (!discount) throw new HttpsError("failed-precondition", "Cupão inativo.");
   return { code, discount };
+});
+
+exports.setInfluencerAccount = onCall({ region }, async (request) => {
+  requireAdmin(request);
+  const uid = text(request.data?.uid, 128);
+  const isInfluencer = request.data?.isInfluencer === true;
+  const couponCode = text(request.data?.couponCode, 30).toUpperCase();
+  if (!uid) throw new HttpsError("invalid-argument", "Conta inválida.");
+  if (isInfluencer && !/^[A-Z0-9_-]{3,30}$/.test(couponCode)) {
+    throw new HttpsError("invalid-argument", "Associe um cupão válido à influencer.");
+  }
+
+  const profileRef = db.collection("profiles").doc(uid);
+  const selectedCouponRef = isInfluencer ? db.collection("coupons").doc(couponCode) : null;
+  await db.runTransaction(async (transaction) => {
+    const profileSnapshot = await transaction.get(profileRef);
+    if (!profileSnapshot.exists) throw new HttpsError("not-found", "Esta conta já não existe.");
+    const profile = profileSnapshot.data();
+    const previousCouponCode = text(profile.influencerCouponCode, 30).toUpperCase();
+    const previousCouponRef = previousCouponCode && previousCouponCode !== couponCode
+      ? db.collection("coupons").doc(previousCouponCode)
+      : null;
+    const selectedCouponSnapshot = selectedCouponRef ? await transaction.get(selectedCouponRef) : null;
+    const previousCouponSnapshot = previousCouponRef ? await transaction.get(previousCouponRef) : null;
+
+    if (selectedCouponRef && !selectedCouponSnapshot?.exists) {
+      throw new HttpsError("not-found", "O cupão selecionado já não existe.");
+    }
+    const assignedUid = text(selectedCouponSnapshot?.data()?.influencerUid, 128);
+    if (assignedUid && assignedUid !== uid) {
+      throw new HttpsError("already-exists", "Este cupão já está associado a outra influencer.");
+    }
+
+    const now = new Date().toISOString();
+    transaction.set(profileRef, {
+      isInfluencer,
+      influencerCouponCode: isInfluencer ? couponCode : FieldValue.delete(),
+      influencerUpdatedAt: now,
+    }, { merge: true });
+
+    if (previousCouponRef && previousCouponSnapshot?.exists && text(previousCouponSnapshot.data().influencerUid, 128) === uid) {
+      transaction.set(previousCouponRef, {
+        influencerUid: FieldValue.delete(),
+        influencerEmail: FieldValue.delete(),
+        influencerName: FieldValue.delete(),
+        updatedAt: now,
+      }, { merge: true });
+    }
+    if (selectedCouponRef) {
+      transaction.set(selectedCouponRef, {
+        influencerUid: uid,
+        influencerEmail: text(profile.email, 180).toLowerCase(),
+        influencerName: text(profile.name, 120),
+        updatedAt: now,
+      }, { merge: true });
+    }
+  });
+
+  return { uid, isInfluencer, couponCode: isInfluencer ? couponCode : null };
 });
 
 exports.submitReview = onCall({ region }, async (request) => {
@@ -396,7 +462,7 @@ exports.submitReview = onCall({ region }, async (request) => {
 
   const deliveredOrder = ordersSnapshot.docs.find((orderDocument) => {
     const order = orderDocument.data();
-    if (order.status !== "delivered") return false;
+    if (order.status !== "delivered" || order.paymentStatus !== "paid") return false;
     return Array.isArray(order.items) && order.items.some((item) => {
       const orderedProductId = text(item.productId || item.id, 120).replace(/^decant-/, "").split("--")[0];
       return orderedProductId === productId;
@@ -597,37 +663,65 @@ exports.ifthenpayCallback = onRequest({ region, secrets: [callbackKey] }, async 
   return response.status(200).send("ok");
 });
 
-async function queueOrderReceivedEmails(order, orderId) {
+async function queueCustomerPaymentInstructions(order, orderId) {
+  const customerBody = emailFrame(`Pagamento da encomenda ${html(orderId)}`, `Olá ${html(order.customer.name)}, recebemos o seu pedido de pagamento.`, `${itemsHtml(order.items)}${totalsHtml(order)}${paymentInstructionsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">A encomenda só será confirmada e enviada depois de recebermos a confirmação do pagamento.</p>`);
+  await queueEmail(order.customer.email, `Pagamento da encomenda ${orderId} · Mystic Essence`, customerBody, `order-${orderId}-payment-instructions`);
+}
+
+async function recordInfluencerCouponUse(order, orderId) {
+  const couponCode = text(order.couponCode, 30).toUpperCase();
+  const discountAmount = Math.round(Number(order.discountAmount || 0) * 100) / 100;
+  if (!couponCode || discountAmount <= 0) return;
+  const couponSnapshot = await db.collection("coupons").doc(couponCode).get();
+  if (!couponSnapshot.exists) return;
+  const coupon = couponSnapshot.data();
+  const influencerUid = text(coupon.influencerUid, 128);
+  if (!influencerUid) return;
+  const usedAt = order.paidAt || new Date().toISOString();
+  await db.collection("influencerCouponUses").doc(orderId).set({
+    influencerUid,
+    couponCode,
+    orderId,
+    usedAt,
+    month: text(usedAt, 7),
+    discountAmount,
+    orderTotal: Math.round(Number(order.total || 0) * 100) / 100,
+    createdAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function queuePaidOrderEmails(order, orderId) {
   const address = `${html(order.customer.address)}, ${html(order.customer.postal)} ${html(order.customer.city)}`;
   const shippingZone = normalizeShippingZone(order.shippingZone);
-  const ownerBody = emailFrame(`Nova encomenda ${html(orderId)}`, "Foi recebida uma nova encomenda na loja.", `${itemsHtml(order.items)}${totalsHtml(order)}${paymentInstructionsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(order.discountAmount || 0)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
-  const customerBody = emailFrame(`Recebemos a sua encomenda ${html(orderId)}`, `Olá ${html(order.customer.name)}, a sua encomenda foi recebida e já aparece no nosso sistema.`, `${itemsHtml(order.items)}${totalsHtml(order)}${paymentInstructionsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando o pagamento for confirmado e quando a encomenda for enviada.</p>`);
+  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(order.discountAmount || 0)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
+  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando a encomenda for enviada.</p>`);
 
   await Promise.all([
-    queueEmail(ownerEmail.value(), `Nova encomenda ${orderId} · Mystic Essence`, ownerBody, `order-${orderId}-owner`),
-    queueEmail(order.customer.email, `Recebemos a sua encomenda ${orderId} · Mystic Essence`, customerBody, `order-${orderId}-received`),
+    queueEmail(ownerEmail.value(), `Nova encomenda paga ${orderId} · Mystic Essence`, ownerBody, `order-${orderId}-owner-paid`),
+    queueEmail(order.customer.email, `Encomenda confirmada ${orderId} · Mystic Essence`, customerBody, `order-${orderId}-paid`),
   ]);
 }
 
 exports.notifyOwnerOfOrder = onDocumentCreated({ document: "orders/{orderId}", region, secrets: [ownerEmail] }, async (event) => {
   const order = event.data.data();
   const orderId = event.params.orderId;
-  if (order.checkoutMode === "ifthenpay" && !order.paymentInitiated) return;
-  await queueOrderReceivedEmails(order, orderId);
-  await event.data.ref.update({ orderReceivedEmailQueuedAt: FieldValue.serverTimestamp() });
+  if (order.paymentStatus !== "paid") return;
+  await recordInfluencerCouponUse(order, orderId);
+  await queuePaidOrderEmails(order, orderId);
+  await event.data.ref.update({ ownerOrderEmailQueuedAt: FieldValue.serverTimestamp(), confirmationEmailSentAt: FieldValue.serverTimestamp() });
 });
 
 exports.notifyCustomerOfPayment = onDocumentUpdated({ document: "orders/{orderId}", region, secrets: [ownerEmail] }, async (event) => {
   const before = event.data.before.data();
   const order = event.data.after.data();
-  if (!before.paymentInitiated && order.paymentInitiated && !order.orderReceivedEmailQueuedAt) {
-    await queueOrderReceivedEmails(order, event.params.orderId);
-    await event.data.after.ref.update({ orderReceivedEmailQueuedAt: FieldValue.serverTimestamp() });
+  if (!before.paymentInitiated && order.paymentInitiated && order.paymentStatus === "pending" && !order.paymentInstructionsEmailQueuedAt) {
+    await queueCustomerPaymentInstructions(order, event.params.orderId);
+    await event.data.after.ref.update({ paymentInstructionsEmailQueuedAt: FieldValue.serverTimestamp() });
   }
   if (before.paymentStatus !== "paid" && order.paymentStatus === "paid" && !order.confirmationEmailSentAt) {
-    const body = emailFrame(`Encomenda ${html(event.params.orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}`);
-    await queueEmail(order.customer.email, `Encomenda confirmada ${event.params.orderId} · Mystic Essence`, body, `order-${event.params.orderId}-paid`);
-    await event.data.after.ref.update({ confirmationEmailSentAt: FieldValue.serverTimestamp() });
+    await recordInfluencerCouponUse(order, event.params.orderId);
+    await queuePaidOrderEmails(order, event.params.orderId);
+    await event.data.after.ref.update({ confirmationEmailSentAt: FieldValue.serverTimestamp(), ownerOrderEmailQueuedAt: FieldValue.serverTimestamp() });
   }
 
   const newlyShipped = before.status !== "shipped" && order.status === "shipped";

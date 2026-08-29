@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { createRequire } = require("node:module");
 const functionsRequire = createRequire(require.resolve("../functions/index.js"));
-const { createCheckout } = require("../functions/index.js");
+const { createCheckout, createPendingOrder, setInfluencerAccount } = require("../functions/index.js");
 const { getFirestore } = functionsRequire("firebase-admin/firestore");
 const { HttpsError } = functionsRequire("firebase-functions/v2/https");
 const db = getFirestore();
@@ -33,7 +33,7 @@ function setup(t, providerResponse = { Status: "000", RequestId: "test-request" 
   }));
   const transaction = t.mock.method(db, "runTransaction", async (callback) => callback({
     get: async (ref) => ({ exists: documents.has(ref.path), data: () => structuredClone(documents.get(ref.path)) }),
-    set: (ref, data) => documents.set(ref.path, data),
+    set: (ref, data, options) => documents.set(ref.path, options?.merge ? { ...documents.get(ref.path), ...data } : data),
     update: (ref, data) => documents.set(ref.path, { ...documents.get(ref.path), ...data }),
   }));
   const fetch = t.mock.method(globalThis, "fetch", async () => {
@@ -49,6 +49,35 @@ function setup(t, providerResponse = { Status: "000", RequestId: "test-request" 
   }
   return { documents, collection, transaction, fetch };
 }
+
+test("checkout without a real payment provider cannot create a free order", async () => {
+  await assert.rejects(createPendingOrder.run(checkoutRequest("912345678")), { code: "failed-precondition" });
+});
+
+test("admin can associate an existing account with one exclusive influencer coupon", async (t) => {
+  const state = setup(t);
+  state.documents.set("profiles/influencer-user", { name: "Catarina", email: "catarina@example.invalid" });
+  state.documents.set("coupons/CATARINA5", { code: "CATARINA5", discount: 5 });
+  const result = await setInfluencerAccount.run({
+    auth: { uid: "bFGr8AtlSGQTDZ9Nel9BVXB0csC2", token: {} },
+    data: { uid: "influencer-user", isInfluencer: true, couponCode: "CATARINA5" },
+  });
+  assert.deepEqual(result, { uid: "influencer-user", isInfluencer: true, couponCode: "CATARINA5" });
+  assert.equal(state.documents.get("profiles/influencer-user").influencerCouponCode, "CATARINA5");
+  assert.equal(state.documents.get("coupons/CATARINA5").influencerUid, "influencer-user");
+  assert.equal(state.documents.get("coupons/CATARINA5").influencerEmail, "catarina@example.invalid");
+});
+
+test("a customer cannot promote an account to influencer", async (t) => {
+  const state = setup(t);
+  state.documents.set("profiles/influencer-user", { name: "Catarina", email: "catarina@example.invalid" });
+  state.documents.set("coupons/CATARINA5", { code: "CATARINA5", discount: 5 });
+  await assert.rejects(setInfluencerAccount.run({
+    auth: { uid: "ordinary-user", token: {} },
+    data: { uid: "influencer-user", isInfluencer: true, couponCode: "CATARINA5" },
+  }), { code: "permission-denied" });
+  assert.equal(state.documents.get("profiles/influencer-user").isInfluencer, undefined);
+});
 
 for (const phone of [undefined, "", "123", "91234567", "9123456789", "212345678", "+34 612345678", "invalid"]) {
   test(`invalid MB WAY phone ${String(phone)} fails before any side effect`, async (t) => {
