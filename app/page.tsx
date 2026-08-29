@@ -59,6 +59,7 @@ import {
   Citrus,
   Cookie,
   CreditCard,
+  Clock3,
   Landmark,
   LayoutDashboard,
   Globe2,
@@ -1561,12 +1562,29 @@ function Header({
 }) {
   const { brands } = useBrands();
   const { settings } = useShippingSettings();
+  const announcements = lang === "pt"
+    ? [
+        `Envios grátis para Portugal Continental a partir de ${price(settings.continental.freeFrom, lang)}`,
+        `Envios grátis para as ilhas a partir de ${price(settings.islands.freeFrom, lang)}`,
+        `Envios grátis para Espanha a partir de ${price(settings.spain.freeFrom, lang)}`,
+        "Venha descobrir a sua essência ideal na Mystic",
+      ]
+    : [
+        `Free shipping to mainland Portugal from ${price(settings.continental.freeFrom, lang)}`,
+        `Free shipping to the islands from ${price(settings.islands.freeFrom, lang)}`,
+        `Free shipping to Spain from ${price(settings.spain.freeFrom, lang)}`,
+        "Come and discover your ideal essence at Mystic",
+      ];
   return (
     <header className="header">
-      <div className="announcement" aria-label="Store announcement">
-        <span>{lang === "pt" ? "Envios gratuitos a partir de" : "Free shipping from"} {price(settings.continental.freeFrom, lang)} {lang === "pt" ? "para Portugal Continental" : "to mainland Portugal"}</span>
-        <i />
-        <span>Perfumes árabes em Santa Maria da Feira</span>
+      <div className="announcement" aria-label={lang === "pt" ? "Informações da loja" : "Store information"}>
+        <div className="announcement-track">
+          {[...announcements, ...announcements].map((message, index) => (
+            <span className="announcement-item" key={`${message}-${index}`} aria-hidden={index >= announcements.length ? "true" : undefined}>
+              <b>{message}</b><i aria-hidden="true" />
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="brand-row">
@@ -4385,42 +4403,54 @@ function CookieConsent({
 
 function Footer({ t, onLegal, onCookies }: { t: (typeof COPY)[Lang]; onLegal: (kind: LegalKind) => void; onCookies: () => void }) {
   const legalLink = (kind: LegalKind, label: string) => (
-    <a href={LEGAL_PATHS[kind]} onClick={(event) => { event.preventDefault(); onLegal(kind); }}>{label}</a>
+    <a href={LEGAL_PATHS[kind]} onClick={(event) => { event.preventDefault(); onLegal(kind); }}><span>{label}</span><ChevronRight size={16} /></a>
   );
   return (
     <footer className="footer">
-      <div className="footer-grid">
-        <div>
+      <div className="footer-inner">
+        <div className="footer-signature">
           <Image src="/mystic-essence-logo.png" width={174} height={174} alt="Mystic Essence" />
-          <p>{t.footerTag}</p>
+          <div className="footer-signature-copy">
+            <span>Mystic Essence</span>
+            <h2>{t.footerTag}</h2>
+            <p>{t.address}</p>
+          </div>
           <div className="socials">
             <a href="https://www.instagram.com/_mystic.essence_/" target="_blank" rel="noreferrer" aria-label="Instagram Mystic Essence"><Camera size={18} /></a>
             <a href="https://www.tiktok.com/@_mystic.essence_" target="_blank" rel="noreferrer" aria-label="TikTok Mystic Essence"><Music2 size={18} /></a>
           </div>
         </div>
-        <div>
-          <span>{t.contact}</span>
-          <h3>Contactos</h3>
-          <p>{t.address}</p>
-          <p>{t.phone}</p>
-          <p>mystic.essence@hotmail.com</p>
-          <p>{t.hours}</p>
+
+        <div className="footer-grid">
+          <section className="footer-contact-panel">
+            <header><span>{t.contact}</span><h3>Contactos</h3></header>
+            <div className="footer-contact-list">
+              <div><MapPin size={20} /><p>{t.address}</p></div>
+              <a href={`tel:${t.phone.replace(/\s/g, "")}`}><Phone size={20} /><p>{t.phone}</p></a>
+              <a href="mailto:mystic.essence@hotmail.com"><Mail size={20} /><p>mystic.essence@hotmail.com</p></a>
+              <div><Clock3 size={20} /><p>{t.hours}</p></div>
+            </div>
+          </section>
+
+          <nav className="footer-legal-panel" aria-label={t.legal}>
+            <header><span>{t.legal}</span><h3>Informação legal</h3></header>
+            <div className="footer-legal-links">
+              {legalLink("terms", "Termos e Condições")}
+              {legalLink("privacy", "Política de Privacidade")}
+              <div className="footer-cookie-row">
+                {legalLink("cookies", "Política de Cookies")}
+                <button type="button" className="footer-cookie-button" onClick={onCookies} aria-label="Alterar preferências de cookies" title="Alterar preferências de cookies">
+                  <Cookie size={15} />
+                </button>
+              </div>
+              {legalLink("returns", "Devoluções e Reembolsos")}
+              <a href="https://www.livroreclamacoes.pt/Inicio/" target="_blank" rel="noreferrer"><span>Livro de Reclamações Eletrónico</span><ChevronRight size={16} /></a>
+            </div>
+          </nav>
         </div>
-        <div>
-          <span>{t.legal}</span>
-          {legalLink("terms", "Termos e Condições")}
-          {legalLink("privacy", "Política de Privacidade")}
-          <div className="footer-cookie-row">
-            {legalLink("cookies", "Política de Cookies")}
-            <button type="button" className="footer-cookie-button" onClick={onCookies} aria-label="Alterar preferências de cookies" title="Alterar preferências de cookies">
-              <Cookie size={15} />
-            </button>
-          </div>
-          {legalLink("returns", "Devoluções e Reembolsos")}
-          <a href="https://www.livroreclamacoes.pt/Inicio/" target="_blank" rel="noreferrer">Livro de Reclamações Eletrónico</a>
-        </div>
+
+        <div className="footer-bottom"><span>© 2026 Mystic Essence.</span><span>{t.rights}</span></div>
       </div>
-      <div className="footer-bottom">© 2026 Mystic Essence. {t.rights}</div>
     </footer>
   );
 }

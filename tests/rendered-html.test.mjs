@@ -24,7 +24,9 @@ test("server-renders the Mystic Essence storefront", async () => {
   assert.match(html, /Perfumaria Árabe/i);
   assert.match(html, /Perfumes Masculinos/i);
   assert.match(html, /Os meus favoritos/i);
-  assert.match(html, /Envios gratuitos a partir de/i);
+  assert.match(html, /Envios grátis para Portugal Continental a partir de/i);
+  assert.match(html, /Envios grátis para as ilhas a partir de/i);
+  assert.match(html, /Envios grátis para Espanha a partir de/i);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/i);
 });
 
