@@ -424,6 +424,40 @@ exports.submitReview = onCall({ region }, async (request) => {
   return { reviewId };
 });
 
+function variantUnavailable(product, variant) {
+  if (!variant) return true;
+  return variant.stock === 0 || variant.soldout === true || (!variant.isDecant && product.tag === "soldout");
+}
+
+exports.subscribeToRestock = onCall({ region }, async (request) => {
+  const productId = text(request.data?.productId, 120).replace(/^decant-/, "").split("--")[0];
+  const volume = text(request.data?.volume, 30);
+  const email = text(request.data?.email, 180).toLowerCase();
+  const language = request.data?.lang === "en" ? "en" : "pt";
+  if (!productId || !volume) throw new HttpsError("invalid-argument", "Produto ou tamanho inválido.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpsError("invalid-argument", "Indique um email válido.");
+
+  const productSnapshot = await db.collection("products").doc(productId).get();
+  if (!productSnapshot.exists) throw new HttpsError("not-found", "Este produto já não existe.");
+  const product = productSnapshot.data();
+  const variant = Array.isArray(product.variants) ? product.variants.find((item) => text(item.volume, 30) === volume) : null;
+  if (!variant) throw new HttpsError("not-found", "Este tamanho já não existe.");
+  if (!variantUnavailable(product, variant)) throw new HttpsError("failed-precondition", "Este tamanho já está disponível.");
+
+  const subscriptionId = createHash("sha256").update(`${productId}:${volume}:${email}`).digest("hex").slice(0, 48);
+  await db.collection("restockSubscriptions").doc(subscriptionId).set({
+    productId,
+    productName: text(product.name?.pt || product.name?.en || productId, 160),
+    volume,
+    email,
+    language,
+    active: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+  return { subscriptionId };
+});
+
 exports.createCheckout = onCall({
   region,
   secrets: [ifthenpayMbKey, ifthenpayMbwayKey, ifthenpayPayshopKey, ifthenpayCardKey],
@@ -603,4 +637,32 @@ exports.notifyCustomerOfPayment = onDocumentUpdated({ document: "orders/{orderId
     await queueEmail(order.customer.email, `Encomenda enviada ${event.params.orderId} · Mystic Essence`, body, `order-${event.params.orderId}-shipped`);
     await event.data.after.ref.update({ trackingEmailSentAt: FieldValue.serverTimestamp() });
   }
+});
+
+exports.notifyRestockSubscribers = onDocumentUpdated({ document: "products/{productId}", region }, async (event) => {
+  const productId = event.params.productId;
+  if (productId.startsWith("decant-")) return;
+  const before = event.data.before.data();
+  const after = event.data.after.data();
+  const beforeVariants = new Map((before.variants || []).map((variant) => [text(variant.volume, 30), variant]));
+  const availableVolumes = (after.variants || [])
+    .filter((variant) => variantUnavailable(before, beforeVariants.get(text(variant.volume, 30))) && !variantUnavailable(after, variant))
+    .map((variant) => text(variant.volume, 30));
+  if (!availableVolumes.length) return;
+
+  const subscriptions = await db.collection("restockSubscriptions").where("productId", "==", productId).get();
+  const productName = text(after.name?.pt || after.name?.en || productId, 160);
+  const baseUrl = publicSiteUrl.value().replace(/\/$/, "");
+  await Promise.all(subscriptions.docs.map(async (subscriptionDocument) => {
+    const subscription = subscriptionDocument.data();
+    if (!subscription.active || !availableVolumes.includes(text(subscription.volume, 30))) return;
+    const isEnglish = subscription.language === "en";
+    const title = isEnglish ? `${productName} is available again` : `${productName} voltou a estar disponível`;
+    const intro = isEnglish
+      ? `The ${html(subscription.volume)} option you asked about is back in stock.`
+      : `A opção de ${html(subscription.volume)} que pediu voltou a estar disponível.`;
+    const body = emailFrame(title, intro, `<p style="margin:24px 0"><a href="${html(`${baseUrl}/produto/${productId}`)}" style="display:inline-block;padding:13px 20px;background:#d5a52e;color:#090806;text-decoration:none;font-weight:700">${isEnglish ? "View product" : "Ver produto"}</a></p><p style="color:#a99e8d;line-height:1.6">${isEnglish ? "Availability is not reserved and may change." : "A disponibilidade não fica reservada e pode voltar a alterar-se."}</p>`);
+    await queueEmail(subscription.email, `${title} · Mystic Essence`, body, `restock-${subscriptionDocument.id}-${Date.now()}`);
+    await subscriptionDocument.ref.update({ active: false, notifiedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  }));
 });

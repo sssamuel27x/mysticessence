@@ -69,6 +69,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /settings/decants {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasAll(['rules'])
+        && request.resource.data.keys().hasOnly(['rules', 'updatedAt'])
+        && request.resource.data.rules is list
+        && request.resource.data.rules.size() > 0
+        && request.resource.data.rules.size() <= 60;
+      allow delete: if false;
+    }
+
     match /brands/{brandId} {
       allow read: if true;
       allow create, update: if isAdmin()
@@ -102,6 +113,11 @@ service cloud.firestore {
     }
 
     match /mail/{mailId} {
+      allow read, write: if false;
+    }
+
+    match /restockSubscriptions/{subscriptionId} {
+      // Created and completed exclusively by Cloud Functions.
       allow read, write: if false;
     }
 

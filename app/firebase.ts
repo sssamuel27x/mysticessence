@@ -27,6 +27,7 @@ import { getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
 import { validateProductImageFiles } from "./product-gallery";
 import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
 import { brandKey } from "./brand-catalogue";
+import { DEFAULT_DECANT_PRICING, isValidDecantPricing, normalizeDecantPricing, type DecantPricingRule } from "../functions/decant-pricing.mjs";
 
 type PublicEnv = Record<string, string | undefined>;
 
@@ -162,6 +163,22 @@ export async function saveShippingSettings(zones: ShippingSettings) {
   }
 }
 
+export function watchDecantPricing(callback: (rules: DecantPricingRule[]) => void, onError: (error: Error) => void) {
+  if (!database) {
+    callback(DEFAULT_DECANT_PRICING.map((rule) => ({ ...rule })));
+    return () => undefined;
+  }
+  return onSnapshot(doc(database, "settings", "decants"), (snapshot) => {
+    callback(snapshot.exists() ? normalizeDecantPricing(snapshot.data().rules) : DEFAULT_DECANT_PRICING.map((rule) => ({ ...rule })));
+  }, onError);
+}
+
+export async function saveDecantPricing(rules: DecantPricingRule[]) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  if (!isValidDecantPricing(rules)) throw new Error("Regras de preços de decants inválidas.");
+  await setDoc(doc(database, "settings", "decants"), { rules: cleanData(rules), updatedAt: new Date().toISOString() });
+}
+
 export function watchBrands(callback: (names: string[]) => void, onError: (error: Error) => void) {
   if (!database) { onError(new Error("Firebase não está configurado.")); return () => undefined; }
   return onSnapshot(collection(database, "brands"), (snapshot) => {
@@ -267,6 +284,12 @@ export function watchReviews<T>(productId: string, callback: (reviews: T[]) => v
 export async function submitReview(payload: { productId: string; rating: number; comment: string }) {
   if (!functions) throw new Error("O Firebase ainda não está configurado.");
   const callable = httpsCallable<typeof payload, { reviewId: string }>(functions, "submitReview");
+  return (await callable(payload)).data;
+}
+
+export async function subscribeToRestock(payload: { productId: string; volume: string; email: string; lang: "pt" | "en" }) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<typeof payload, { subscriptionId: string }>(functions, "subscribeToRestock");
   return (await callable(payload)).data;
 }
 

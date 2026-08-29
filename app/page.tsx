@@ -9,6 +9,7 @@ import { ShippingSettingsProvider, ShippingSettingsDialog, useShippingSettings }
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
 import { SHIPPING_ZONE_IDS, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
+import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import {
   createCheckout,
   createPendingOrder,
@@ -23,14 +24,17 @@ import {
   removeCoupon as removeFirebaseCoupon,
   removeProduct as removeFirebaseProduct,
   saveCoupon as saveFirebaseCoupon,
+  saveDecantPricing,
   saveFavoriteFolders,
   saveProduct as saveFirebaseProduct,
   seedProducts,
   submitReview as submitFirebaseReview,
+  subscribeToRestock,
   updateOrder as updateFirebaseOrder,
   uploadProductImage,
   validateCoupon,
   watchCoupons,
+  watchDecantPricing,
   watchFavoriteFolders,
   watchOrders,
   watchProducts,
@@ -79,6 +83,7 @@ import {
   ShoppingBag,
   Smartphone,
   Sparkles,
+  SlidersHorizontal,
   Star,
   Tag,
   TicketPercent,
@@ -139,6 +144,7 @@ type Product = {
 };
 
 type DraftProductImage = ProductImage & { id: string; file?: File };
+type DraftVariant = { id: string; volume: string; price: string; isDecant: boolean; stock: string; soldout: boolean };
 
 type ListingFilters = {
   availability: "all" | "stock" | "soldout";
@@ -881,6 +887,16 @@ function price(value: number, lang: Lang) {
     style: "currency",
     currency: "EUR",
   }).format(value);
+}
+
+function adminSaveError(error: unknown, lang: Lang) {
+  const message = error instanceof Error ? error.message.replace(/^FirebaseError:\s*/i, "") : "";
+  if (/permission|insufficient/i.test(message)) {
+    return lang === "pt"
+      ? "A sessão não tem permissão de administrador. Termine sessão, volte a entrar e tente novamente."
+      : "This session does not have administrator permission. Sign out, sign back in, and try again.";
+  }
+  return message || (lang === "pt" ? "Não foi possível guardar os preços." : "The prices could not be saved.");
 }
 
 function productSet(products: Product[], kind: ListingKind) {
@@ -1970,6 +1986,7 @@ function ShowcaseProductCard({
       <div className="home-new-copy">
         <span>{label}:</span>
         <button onClick={() => onProduct(product.id)}>{product.name[lang]}</button>
+        <small className="home-new-brand">{product.brand}</small>
         <div className="home-new-rating" aria-label={lang === "pt" ? "Ainda sem avaliações" : "No reviews yet"}><i>☆☆☆☆☆</i><small>(0)</small></div>
         <strong className={discount > 0 ? "discounted" : ""}>
           {discount > 0 && <del>{price(product.price, lang)}</del>}
@@ -2315,6 +2332,10 @@ function ProductDetail({
   const hasNotes = [product.notes.top, product.notes.heart, product.notes.base]
     .some((group) => group.pt.length > 0 || group.en.length > 0);
   const isDecant = selectedVariant.isDecant;
+  const [restockEmail, setRestockEmail] = useState(session?.email ?? "");
+  const [restockBusy, setRestockBusy] = useState(false);
+  const [restockMessage, setRestockMessage] = useState("");
+  const [restockError, setRestockError] = useState("");
 
   useEffect(() => {
     setSelectedVolume(product.volume);
@@ -2323,7 +2344,13 @@ function ProductDetail({
 
   useEffect(() => {
     setQty((value) => Math.min(value, maximumQuantity));
+    setRestockMessage("");
+    setRestockError("");
   }, [selectedVolume, maximumQuantity]);
+
+  useEffect(() => {
+    if (session?.email) setRestockEmail(session.email);
+  }, [session?.email]);
 
   function addSelectedVariant() {
     if (selectedSoldOut) return;
@@ -2338,6 +2365,22 @@ function ProductDetail({
       discount: undefined,
       promotionEndsAt: undefined,
     }, qty);
+  }
+
+  async function requestRestockNotification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRestockMessage("");
+    setRestockError("");
+    if (!restockEmail.trim()) return;
+    setRestockBusy(true);
+    try {
+      await subscribeToRestock({ productId: canonicalProductId(product.id), volume: selectedVariant.volume, email: restockEmail.trim(), lang });
+      setRestockMessage(lang === "pt" ? "Avisamos por email assim que este tamanho voltar." : "We will email you as soon as this size returns.");
+    } catch (error) {
+      setRestockError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível criar o aviso." : "The alert could not be created."));
+    } finally {
+      setRestockBusy(false);
+    }
   }
 
   return (
@@ -2406,6 +2449,16 @@ function ProductDetail({
                 })}
               </div>
             </fieldset>
+
+            {selectedSoldOut && (
+              <form className="restock-alert" onSubmit={requestRestockNotification}>
+                <div><Mail size={19} /><span><strong>{lang === "pt" ? "Avise-me quando voltar" : "Notify me when it returns"}</strong><small>{lang === "pt" ? `Receba um email quando ${selectedVolume} estiver disponível.` : `Receive an email when ${selectedVolume} is available.`}</small></span></div>
+                <label><span className="sr-only">Email</span><input type="email" value={restockEmail} onChange={(event) => setRestockEmail(event.target.value)} placeholder="email@exemplo.pt" required /></label>
+                <button type="submit" disabled={restockBusy}>{restockBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Criar aviso" : "Create alert")}</button>
+                {restockMessage && <p className="restock-success" role="status"><Check size={14} />{restockMessage}</p>}
+                {restockError && <p className="restock-error" role="alert">{restockError}</p>}
+              </form>
+            )}
 
             <div className="buy-row">
               <div className="qty-control" aria-label={t.qty}>
@@ -2990,9 +3043,14 @@ function AdminPage({
   onShop: () => void;
   onLogout: () => void;
 }) {
-  const emptyDraft = () => ({ name: "", brand: "", descriptionPt: "", descriptionEn: "", price: "", volume: "100ml", category: "Unissexo" as Product["category"], scentProfile: "fresh" as ScentProfile, tag: "stock" as Product["tag"], isNew: false, bestSeller: false, promotion: false, discount: "", endsAt: toDateTimeInput(), variantSoldOut: {} as Record<string, boolean>, variantStock: {} as Record<string, string> });
+  const emptyDraft = () => ({ name: "", brand: "", descriptionPt: "", descriptionEn: "", price: "", volume: "100ml", category: "Unissexo" as Product["category"], scentProfile: "fresh" as ScentProfile, tag: "stock" as Product["tag"], isNew: false, bestSeller: false, promotion: false, discount: "", endsAt: toDateTimeInput() });
+  const defaultDraftVariants = (): DraftVariant[] => [
+    { id: crypto.randomUUID(), volume: "100ml", price: "", isDecant: false, stock: "", soldout: false },
+    ...decantVariants("custom", 0).map((variant) => ({ id: crypto.randomUUID(), volume: variant.volume, price: String(variant.price), isDecant: true, stock: "", soldout: false })),
+  ];
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
+  const [draftVariants, setDraftVariants] = useState<DraftVariant[]>(defaultDraftVariants);
   const [editorOpen, setEditorOpen] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [draftImages, setDraftImages] = useState<DraftProductImage[]>([]);
@@ -3006,6 +3064,9 @@ function AdminPage({
   const [couponOpen, setCouponOpen] = useState(false);
   const [shippingOpen, setShippingOpen] = useState(false);
   const [brandsOpen, setBrandsOpen] = useState(false);
+  const [decantPricingOpen, setDecantPricingOpen] = useState(false);
+  const [decantPricingRules, setDecantPricingRules] = useState<DecantPricingRule[]>(DEFAULT_DECANT_PRICING.map((rule) => ({ ...rule })));
+  const [decantPricingError, setDecantPricingError] = useState("");
   const { brands } = useBrands();
   const [couponCode, setCouponCode] = useState("");
   const [couponDiscount, setCouponDiscount] = useState("10");
@@ -3015,7 +3076,7 @@ function AdminPage({
   const [catalogHighlight, setCatalogHighlight] = useState<"all" | "best" | "sale">("all");
   const copy = lang === "pt" ? {
     title: "Gestão da loja", store: "Ver loja", logout: "Sair", products: "Produtos", best: "Best sellers", sold: "Esgotados", orders: "Encomendas",
-    add: "Adicionar produto", edit: "Editar produto", name: "Nome", brand: "Marca", descriptionPt: "Descrição do produto (Português)", descriptionEn: "Descrição do produto (Inglês)", descriptionHint: "Descreva o aroma, a sensação e para quem é indicada esta fragrância.", price: "Preço", volume: "Tamanho", category: "Categoria", scentProfile: "Perfil olfativo", status: "Estado", variantStock: "Stock por tamanho", stockQuantity: "Quantidade", stockUndefined: "Ilimitado", stockHelp: "Deixe a quantidade vazia para manter stock ilimitado.", fullSize: "Frasco inteiro", decant: "Decant", variantSoldOut: "Esgotado",
+    add: "Adicionar produto", edit: "Editar produto", name: "Nome", brand: "Marca", descriptionPt: "Descrição do produto (Português)", descriptionEn: "Descrição do produto (Inglês)", descriptionHint: "Descreva o aroma, a sensação e para quem é indicada esta fragrância.", price: "Preço", volume: "Tamanho", category: "Categoria", scentProfile: "Perfil olfativo", status: "Estado", variantStock: "Tamanhos, preços e stock", stockQuantity: "Quantidade", stockUndefined: "Ilimitado", stockHelp: "Adicione os tamanhos vendidos e defina o preço e stock de cada um. Quantidade vazia significa stock ilimitado.", fullSize: "Frasco inteiro", decant: "Decant", variantSoldOut: "Esgotado",
     save: "Guardar produto", cancel: "Cancelar", inventory: "Inventário", actions: "Ações", remove: "Remover", editAction: "Editar", image: "Imagem do produto", imageHint: "Escolher uma imagem JPG, PNG ou WebP (máx. 5 MB)", promotion: "Criar promoção", bestSellerToggle: "Adicionar aos Best sellers", newToggle: "Novidade", discount: "Desconto (%)", newPrice: "Novo preço", promotionEnd: "Termina em", seed: "Enviar catálogo para Firebase", tracking: "Número de seguimento", confirmTracking: "Confirmar envio",
     ordersTitle: "Encomendas recebidas", ordersSub: "Dados de entrega e resumo de cada pedido realizado no mockup.", noOrders: "Ainda não existem encomendas.", noOrdersText: "As encomendas concluídas no checkout vão aparecer aqui.",
     customer: "Cliente", delivery: "Entrega", payment: "Pagamento", items: "Produtos", notes: "Notas do cliente", orderStatus: "Estado da encomenda",
@@ -3025,7 +3086,7 @@ function AdminPage({
     statuses: { received: "Recebida", preparing: "Em preparação", shipped: "Enviada", delivered: "Entregue" },
   } : {
     title: "Store management", store: "View store", logout: "Sign out", products: "Products", best: "Best sellers", sold: "Sold out", orders: "Orders",
-    add: "Add product", edit: "Edit product", name: "Name", brand: "Brand", descriptionPt: "Product description (Portuguese)", descriptionEn: "Product description (English)", descriptionHint: "Describe the scent, feeling and who this fragrance is best suited for.", price: "Price", volume: "Size", category: "Category", scentProfile: "Scent profile", status: "Status", variantStock: "Stock by size", stockQuantity: "Quantity", stockUndefined: "Unlimited", stockHelp: "Leave the quantity empty to keep unlimited stock.", fullSize: "Full bottle", decant: "Decant", variantSoldOut: "Sold out",
+    add: "Add product", edit: "Edit product", name: "Name", brand: "Brand", descriptionPt: "Product description (Portuguese)", descriptionEn: "Product description (English)", descriptionHint: "Describe the scent, feeling and who this fragrance is best suited for.", price: "Price", volume: "Size", category: "Category", scentProfile: "Scent profile", status: "Status", variantStock: "Sizes, prices and stock", stockQuantity: "Quantity", stockUndefined: "Unlimited", stockHelp: "Add each available size and set its price and stock. An empty quantity means unlimited stock.", fullSize: "Full bottle", decant: "Decant", variantSoldOut: "Sold out",
     save: "Save product", cancel: "Cancel", inventory: "Inventory", actions: "Actions", remove: "Remove", editAction: "Edit", image: "Product image", imageHint: "Choose a JPG, PNG or WebP image (max. 5 MB)", promotion: "Create promotion", bestSellerToggle: "Add to Best sellers", newToggle: "New arrival", discount: "Discount (%)", newPrice: "New price", promotionEnd: "Ends at", seed: "Upload catalogue to Firebase", tracking: "Tracking number", confirmTracking: "Confirm shipment",
     ordersTitle: "Received orders", ordersSub: "Delivery details and purchase summary for every mock order.", noOrders: "There are no orders yet.", noOrdersText: "Orders completed at checkout will appear here.",
     customer: "Customer", delivery: "Delivery", payment: "Payment", items: "Products", notes: "Customer notes", orderStatus: "Order status",
@@ -3043,6 +3104,11 @@ function AdminPage({
   useEffect(() => {
     const previews = imagePreviewUrls.current;
     return () => { previews.forEach((url) => URL.revokeObjectURL(url)); };
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    return watchDecantPricing(setDecantPricingRules, (error) => setDecantPricingError(error.message));
   }, []);
 
   function clearImageDraft() {
@@ -3078,10 +3144,54 @@ function AdminPage({
     setCatalogHighlight("all");
   }
 
+  function updateDraftVariant(id: string, changes: Partial<DraftVariant>) {
+    const primaryId = draftVariants.find((variant) => !variant.isDecant)?.id;
+    setDraftVariants((variants) => variants.map((variant) => variant.id === id ? { ...variant, ...changes } : variant));
+    if (id === primaryId) {
+      setDraft((current) => ({
+        ...current,
+        ...(changes.volume !== undefined ? { volume: changes.volume } : {}),
+        ...(changes.price !== undefined ? { price: changes.price } : {}),
+      }));
+    }
+  }
+
+  function updatePrimaryVariant(changes: Partial<Pick<DraftVariant, "volume" | "price">>) {
+    const primary = draftVariants.find((variant) => !variant.isDecant);
+    if (primary) updateDraftVariant(primary.id, changes);
+  }
+
+  function addDraftVariant(isDecant: boolean) {
+    const usedVolumes = new Set(draftVariants.map((variant) => variant.volume.toLowerCase().replace(/\s/g, "")));
+    const defaultVolume = isDecant
+      ? ([2, 5, 10].find((size) => !usedVolumes.has(`${size}ml`)) ?? 15) + "ml"
+      : ([30, 50, 75, 100, 150].find((size) => !usedVolumes.has(`${size}ml`)) ?? 200) + "ml";
+    const decantSize = Number.parseInt(defaultVolume, 10) as DecantSize;
+    const suggestedPrice = isDecant ? decantPriceFor(decantPricingRules, Number(draft.price) || 0, decantSize) : Number(draft.price) || 0;
+    setDraftVariants((variants) => [...variants, {
+      id: crypto.randomUUID(),
+      volume: defaultVolume,
+      price: String(suggestedPrice ?? 0),
+      isDecant,
+      stock: "",
+      soldout: false,
+    }]);
+  }
+
+  function removeDraftVariant(id: string) {
+    const target = draftVariants.find((variant) => variant.id === id);
+    if (target && !target.isDecant && draftVariants.filter((variant) => !variant.isDecant).length === 1) {
+      window.alert(lang === "pt" ? "O produto precisa de pelo menos um tamanho de frasco." : "The product needs at least one full-bottle size.");
+      return;
+    }
+    setDraftVariants((variants) => variants.filter((variant) => variant.id !== id));
+  }
+
   function resetEditor() {
     if (adminBusy) return;
     setEditingId(null);
     setDraft(emptyDraft());
+    setDraftVariants(defaultDraftVariants());
     clearImageDraft();
     setEditorOpen(false);
   }
@@ -3089,6 +3199,7 @@ function AdminPage({
   function addProduct() {
     setEditingId(null);
     setDraft(emptyDraft());
+    setDraftVariants(defaultDraftVariants());
     newProductId.current = `custom-${crypto.randomUUID()}`;
     clearImageDraft();
     setEditorOpen(true);
@@ -3098,7 +3209,9 @@ function AdminPage({
     const discount = productDiscount(product);
     const endsAt = productPromotionEnd(product);
     setEditingId(product.id);
-    setDraft({ name: product.name[lang], brand: product.brand, descriptionPt: product.desc?.pt ?? "", descriptionEn: product.desc?.en ?? "", price: String(product.price), volume: product.volume, category: product.category, scentProfile: product.scentProfile, tag: product.tag === "new" ? "stock" : product.tag, isNew: product.isNew ?? product.tag === "new", bestSeller: Boolean(product.bestSeller), promotion: discount > 0, discount: discount ? String(discount) : "", endsAt: toDateTimeInput(endsAt), variantSoldOut: Object.fromEntries(product.variants.map((variant) => [variant.volume, Boolean(variant.soldout)])), variantStock: Object.fromEntries(product.variants.map((variant) => [variant.volume, typeof variant.stock === "number" ? String(variant.stock) : ""])) });
+    setDraft({ name: product.name[lang], brand: product.brand, descriptionPt: product.desc?.pt ?? "", descriptionEn: product.desc?.en ?? "", price: String(product.price), volume: product.volume, category: product.category, scentProfile: product.scentProfile, tag: product.tag === "new" ? "stock" : product.tag, isNew: product.isNew ?? product.tag === "new", bestSeller: Boolean(product.bestSeller), promotion: discount > 0, discount: discount ? String(discount) : "", endsAt: toDateTimeInput(endsAt) });
+    const editableVariants = product.variants.length ? product.variants : [{ volume: product.volume, price: product.price, soldout: product.tag === "soldout" }];
+    setDraftVariants(editableVariants.map((variant) => ({ id: crypto.randomUUID(), volume: variant.volume, price: String(variant.price), isDecant: Boolean(variant.isDecant), stock: typeof variant.stock === "number" ? String(variant.stock) : "", soldout: Boolean(variant.soldout) })));
     clearImageDraft();
     setDraftImages(getProductImages(product).map((image) => ({ ...image, id: crypto.randomUUID() })));
     setEditorOpen(true);
@@ -3110,20 +3223,32 @@ function AdminPage({
     const existing = products.find((product) => product.id === editingId);
     const fallback = existing ?? PRODUCTS[0];
     const nextId = existing?.id ?? newProductId.current;
-    const basePrice = Math.max(0, Number(draft.price));
-    const fullVariants = existing?.variants.filter((variant) => !variant.isDecant) ?? [];
-    const updatedFullVariants = fullVariants.length > 1
-      ? fullVariants.map((variant, index) => index === 0 ? { ...variant, volume: draft.volume.trim(), price: basePrice } : variant)
-      : [{ volume: draft.volume.trim(), price: basePrice }];
     const isOtherProduct = draft.category === "Outros produtos";
-    const decants = isOtherProduct ? [] : existing?.variants.filter((variant) => variant.isDecant) ?? decantVariants(nextId, basePrice);
-    const updatedVariants = [...updatedFullVariants, ...decants].map((variant) => {
-      const stockValue = draft.variantStock[variant.volume];
-      const stock = stockValue === undefined || stockValue.trim() === "" ? undefined : Math.max(0, Math.trunc(Number(stockValue) || 0));
+    const usableDraftVariants = draftVariants.filter((variant) => variant.volume.trim() && (!isOtherProduct || !variant.isDecant));
+    const primaryDraftVariant = usableDraftVariants.find((variant) => !variant.isDecant);
+    const basePrice = Math.max(0, Number(primaryDraftVariant?.price ?? draft.price));
+    const baseVolume = primaryDraftVariant?.volume.trim() || draft.volume.trim();
+    const normalizedVolumes = usableDraftVariants.map((variant) => variant.volume.toLowerCase().replace(/\s/g, ""));
+    if (!usableDraftVariants.some((variant) => !variant.isDecant)) {
+      window.alert(lang === "pt" ? "Adicione pelo menos um tamanho de frasco." : "Add at least one full-bottle size.");
+      return;
+    }
+    if (new Set(normalizedVolumes).size !== normalizedVolumes.length) {
+      window.alert(lang === "pt" ? "Existem tamanhos repetidos. Cada tamanho só pode aparecer uma vez." : "There are duplicate sizes. Each size can only appear once.");
+      return;
+    }
+    if (usableDraftVariants.some((variant) => !Number.isFinite(Number(variant.price)) || Number(variant.price) < 0)) {
+      window.alert(lang === "pt" ? "Revise os preços dos tamanhos." : "Review the size prices.");
+      return;
+    }
+    const updatedVariants = (usableDraftVariants.length ? usableDraftVariants : defaultDraftVariants().slice(0, 1)).map((variant) => {
+      const stock = variant.stock.trim() === "" ? undefined : Math.max(0, Math.trunc(Number(variant.stock) || 0));
       return {
-        ...variant,
+        volume: variant.volume.trim(),
+        price: Math.max(0, Number(variant.price) || 0),
+        isDecant: variant.isDecant || undefined,
         stock,
-        soldout: stock === 0 || (draft.variantSoldOut[variant.volume] ?? Boolean(variant.soldout)),
+        soldout: stock === 0 || variant.soldout,
       };
     });
     setAdminBusy(true);
@@ -3160,7 +3285,7 @@ function AdminPage({
         price: basePrice,
         discount: draft.promotion ? Math.min(95, Math.max(1, Number(draft.discount))) : undefined,
         promotionEndsAt: draft.promotion ? new Date(draft.endsAt).toISOString() : undefined,
-        volume: draft.volume.trim(),
+        volume: baseVolume,
         variants: updatedVariants,
         family: existing?.family ?? { pt: "", en: "" },
         desc: {
@@ -3198,6 +3323,7 @@ function AdminPage({
       });
       setEditingId(null);
       setDraft(emptyDraft());
+      setDraftVariants(defaultDraftVariants());
       clearImageDraft();
       setEditorOpen(false);
     } catch (error) {
@@ -3264,15 +3390,63 @@ function AdminPage({
     if (firebaseEnabled) await removeFirebaseCoupon(code);
   }
 
+  async function applyGlobalDecantRules(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setDecantPricingError("");
+    if (!isValidDecantPricing(decantPricingRules)) {
+      setDecantPricingError(lang === "pt" ? "Revise os intervalos e preços antes de guardar." : "Review the ranges and prices before saving.");
+      return;
+    }
+    const updatedBaseProducts = inventoryProducts.map((product) => applyDecantPricing(product, decantPricingRules));
+    const updates = new Map<string, Product>();
+    updatedBaseProducts.forEach((product) => {
+      updates.set(product.id, product);
+      const decantProduct = asDecantProduct(product);
+      if (decantProduct) updates.set(decantProduct.id, decantProduct);
+    });
+    setAdminBusy(true);
+    try {
+      if (firebaseEnabled) {
+        await saveDecantPricing(decantPricingRules);
+        await Promise.all([...updates.values()].map((product) => saveFirebaseProduct(product.id, product)));
+      }
+      setProducts((items) => items.map((product) => updates.get(product.id) ?? product));
+      setDecantPricingOpen(false);
+    } catch (error) {
+      setDecantPricingError(adminSaveError(error, lang));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   return (
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Preços dos decants" : "Decant prices"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="icon-text-button" onClick={onLogout}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       {shippingOpen && <ShippingSettingsDialog lang={lang} onClose={() => setShippingOpen(false)} />}
       {brandsOpen && <BrandSettingsDialog lang={lang} onClose={() => setBrandsOpen(false)} onCreated={editorOpen ? (brand) => { setDraft((current) => ({ ...current, brand })); setBrandsOpen(false); } : undefined} />}
+      {decantPricingOpen && <>
+        <button className="modal-backdrop" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel} />
+        <form className="decant-pricing-manager" onSubmit={applyGlobalDecantRules} role="dialog" aria-modal="true" aria-labelledby="decant-pricing-title">
+          <header><div><SlidersHorizontal size={20} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="decant-pricing-title">{lang === "pt" ? "Preços gerais dos decants" : "Global decant prices"}</h2></div></div><button type="button" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel}><X size={20} /></button></header>
+          <p>{lang === "pt" ? "Cada regra aplica um preço de decant aos perfumes cujo preço do frasco esteja dentro do intervalo." : "Each rule applies a decant price to bottles whose price is within the range."}</p>
+          <div className="decant-pricing-list">
+            {decantPricingRules.map((rule) => <div className="decant-pricing-row" key={rule.id}>
+              <label><span>{lang === "pt" ? "Preço mínimo" : "Minimum"}</span><input type="number" min="0" step="0.01" value={rule.minPrice} onChange={(event) => setDecantPricingRules((rules) => rules.map((item) => item.id === rule.id ? { ...item, minPrice: Number(event.target.value) } : item))} /></label>
+              <label><span>{lang === "pt" ? "Preço máximo" : "Maximum"}</span><input type="number" min="0" step="0.01" value={rule.maxPrice} onChange={(event) => setDecantPricingRules((rules) => rules.map((item) => item.id === rule.id ? { ...item, maxPrice: Number(event.target.value) } : item))} /></label>
+              <label><span>{lang === "pt" ? "Tamanho" : "Size"}</span><select value={rule.size} onChange={(event) => setDecantPricingRules((rules) => rules.map((item) => item.id === rule.id ? { ...item, size: Number(event.target.value) as DecantSize } : item))}><option value="2">2 ml</option><option value="5">5 ml</option><option value="10">10 ml</option></select></label>
+              <label><span>{lang === "pt" ? "Preço do decant" : "Decant price"}</span><input type="number" min="0" step="0.01" value={rule.price} onChange={(event) => setDecantPricingRules((rules) => rules.map((item) => item.id === rule.id ? { ...item, price: Number(event.target.value) } : item))} /></label>
+              <button type="button" onClick={() => setDecantPricingRules((rules) => rules.filter((item) => item.id !== rule.id))} aria-label={lang === "pt" ? "Remover regra" : "Remove rule"}><Trash2 size={16} /></button>
+            </div>)}
+          </div>
+          <button className="ghost-button decant-rule-add" type="button" onClick={() => setDecantPricingRules((rules) => [...rules, { id: crypto.randomUUID(), minPrice: 0, maxPrice: 100, size: 2, price: 1.9 }])}><Plus size={16} />{lang === "pt" ? "Adicionar regra" : "Add rule"}</button>
+          {decantPricingError && <p className="auth-error" role="alert">{decantPricingError}</p>}
+          <button className="primary-button" type="submit" disabled={adminBusy}>{adminBusy ? (lang === "pt" ? "A aplicar..." : "Applying...") : (lang === "pt" ? "Guardar e aplicar ao catálogo" : "Save and apply to catalogue")}</button>
+        </form>
+      </>}
 
       <div className="admin-metrics">
         <div><Boxes size={20} /><span>{copy.products}</span><strong>{inventoryProducts.length}</strong></div>
@@ -3350,8 +3524,8 @@ function AdminPage({
           <label className="field admin-description-field"><span>{copy.descriptionPt}</span><textarea rows={4} maxLength={1200} value={draft.descriptionPt} onChange={(event) => setDraft({ ...draft, descriptionPt: event.target.value })} placeholder={copy.descriptionHint} /></label>
           <label className="field admin-description-field"><span>{copy.descriptionEn}</span><textarea rows={4} maxLength={1200} value={draft.descriptionEn} onChange={(event) => setDraft({ ...draft, descriptionEn: event.target.value })} placeholder={copy.descriptionHint} /></label>
           <div className="admin-field-row">
-            <label className={`field ${draft.promotion ? "locked-field" : ""}`}><span>{copy.price}</span><input type="number" min="0" step="0.01" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} disabled={draft.promotion} required /></label>
-            <label className="field"><span>{copy.volume}</span><input value={draft.volume} onChange={(event) => setDraft({ ...draft, volume: event.target.value })} required /></label>
+            <label className={`field ${draft.promotion ? "locked-field" : ""}`}><span>{copy.price}</span><input type="number" min="0" step="0.01" value={draft.price} onChange={(event) => { setDraft({ ...draft, price: event.target.value }); updatePrimaryVariant({ price: event.target.value }); }} disabled={draft.promotion} required /></label>
+            <label className="field"><span>{copy.volume}</span><input value={draft.volume} onChange={(event) => { setDraft({ ...draft, volume: event.target.value }); updatePrimaryVariant({ volume: event.target.value }); }} required /></label>
           </div>
           <label className="promotion-toggle">
             <input type="checkbox" checked={draft.promotion} onChange={(event) => setDraft({ ...draft, promotion: event.target.checked, discount: event.target.checked ? (draft.discount || "10") : "", endsAt: event.target.checked ? (draft.endsAt || toDateTimeInput()) : draft.endsAt })} />
@@ -3371,26 +3545,25 @@ function AdminPage({
           <section className="admin-variant-stock">
             <h3>{copy.variantStock}</h3>
             <p className="admin-stock-help">{copy.stockHelp}</p>
-            <div>
-              {(products.find((product) => product.id === editingId)?.variants ?? [
-                { volume: draft.volume || "100ml", price: Number(draft.price) || 0 },
-                ...decantVariants(editingId ?? "custom", Number(draft.price) || 0),
-              ]).filter((variant) => draft.category !== "Outros produtos" || !variant.isDecant).map((variant, index) => {
-                const volume = index === 0 && !variant.isDecant ? (draft.volume || variant.volume) : variant.volume;
-                const isSoldOut = draft.variantSoldOut[volume] ?? Boolean(variant.soldout);
-                const stockValue = draft.variantStock[volume] ?? (typeof variant.stock === "number" ? String(variant.stock) : "");
-                return (
-                  <div className="admin-variant-stock-row" key={`${volume}-${variant.isDecant ? "decant" : "full"}`}>
-                    <span><strong>{volume}</strong><small>{draft.category === "Outros produtos" ? (lang === "pt" ? "Produto" : "Product") : variant.isDecant ? copy.decant : copy.fullSize}</small></span>
-                    <label className="admin-stock-quantity"><span>{copy.stockQuantity}</span><input type="number" min="0" step="1" value={stockValue} placeholder={copy.stockUndefined} onChange={(event) => setDraft({ ...draft, variantStock: { ...draft.variantStock, [volume]: event.target.value }, variantSoldOut: event.target.value === "0" ? { ...draft.variantSoldOut, [volume]: true } : draft.variantSoldOut })} /></label>
-                    <label className="admin-stock-soldout">
-                      <input className="variant-soldout-input" type="checkbox" checked={isSoldOut} onChange={(event) => setDraft({ ...draft, variantSoldOut: { ...draft.variantSoldOut, [volume]: event.target.checked } })} />
-                      <i><Check size={13} /></i>
-                      <b>{copy.variantSoldOut}</b>
-                    </label>
-                  </div>
-                );
-              })}
+            <div className="admin-variant-list">
+              {draftVariants.filter((variant) => draft.category !== "Outros produtos" || !variant.isDecant).map((variant) => (
+                <div className="admin-variant-stock-row" key={variant.id}>
+                  <label className="admin-variant-field"><span>{lang === "pt" ? "Tamanho" : "Size"}</span><input value={variant.volume} onChange={(event) => updateDraftVariant(variant.id, { volume: event.target.value })} placeholder={variant.isDecant ? "5ml" : "100ml"} required /></label>
+                  <label className="admin-variant-field"><span>{lang === "pt" ? "Tipo" : "Type"}</span><select value={variant.isDecant ? "decant" : "full"} onChange={(event) => updateDraftVariant(variant.id, { isDecant: event.target.value === "decant" })} disabled={draft.category === "Outros produtos"}><option value="full">{draft.category === "Outros produtos" ? (lang === "pt" ? "Produto" : "Product") : copy.fullSize}</option><option value="decant">{copy.decant}</option></select></label>
+                  <label className={`admin-variant-field ${draft.promotion && !variant.isDecant ? "locked-field" : ""}`}><span>{copy.price}</span><input type="number" min="0" step="0.01" value={variant.price} onChange={(event) => updateDraftVariant(variant.id, { price: event.target.value })} disabled={draft.promotion && !variant.isDecant} required /></label>
+                  <label className="admin-stock-quantity"><span>{copy.stockQuantity}</span><input type="number" min="0" step="1" value={variant.stock} placeholder={copy.stockUndefined} onChange={(event) => updateDraftVariant(variant.id, { stock: event.target.value, soldout: event.target.value === "0" ? true : variant.soldout })} /></label>
+                  <label className="admin-stock-soldout">
+                    <input className="variant-soldout-input" type="checkbox" checked={variant.soldout} onChange={(event) => updateDraftVariant(variant.id, { soldout: event.target.checked })} />
+                    <i><Check size={13} /></i>
+                    <b>{copy.variantSoldOut}</b>
+                  </label>
+                  <button className="admin-variant-remove" type="button" onClick={() => removeDraftVariant(variant.id)} aria-label={lang === "pt" ? `Remover ${variant.volume}` : `Remove ${variant.volume}`}><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+            <div className="admin-variant-actions">
+              <button className="ghost-button" type="button" onClick={() => addDraftVariant(false)}><Plus size={15} />{lang === "pt" ? "Adicionar tamanho" : "Add size"}</button>
+              {draft.category !== "Outros produtos" && <button className="ghost-button" type="button" onClick={() => addDraftVariant(true)}><Plus size={15} />{lang === "pt" ? "Adicionar decant" : "Add decant"}</button>}
             </div>
           </section>
           <label className="field"><span>{copy.scentProfile}</span><select value={draft.scentProfile} onChange={(event) => setDraft({ ...draft, scentProfile: event.target.value as ScentProfile })}>{SCENT_PROFILES.map((profile) => <option key={profile} value={profile}>{SCENT_PROFILE_LABELS[lang][profile]}</option>)}</select></label>

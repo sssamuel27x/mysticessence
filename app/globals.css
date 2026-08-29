@@ -1500,6 +1500,23 @@ a {
   text-transform: uppercase;
 }
 
+.catalog-showcase-card .home-new-copy > button {
+  min-height: 48px;
+  color: #e3ba46;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.home-new-brand {
+  color: #9e9589;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .home-new-rating {
   display: flex;
   align-items: center;
@@ -2977,6 +2994,92 @@ select {
 .variant-options button > strong {
   color: var(--gold-2);
   font-size: 12px;
+}
+
+.restock-alert {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid rgba(214, 166, 61, 0.34);
+  background: linear-gradient(135deg, rgba(214, 166, 61, 0.08), rgba(255, 255, 255, 0.018));
+}
+
+.restock-alert > div {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.restock-alert > div > svg {
+  flex: 0 0 auto;
+  color: var(--gold-2);
+}
+
+.restock-alert strong,
+.restock-alert small {
+  display: block;
+}
+
+.restock-alert strong {
+  color: var(--cream);
+  font-size: 13px;
+}
+
+.restock-alert small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.restock-alert input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(214, 166, 61, 0.3);
+  background: #070605;
+  color: var(--cream);
+  outline: none;
+}
+
+.restock-alert input:focus {
+  border-color: var(--gold-2);
+}
+
+.restock-alert > button {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--gold);
+  background: #c99422;
+  color: #090704;
+  font-weight: 900;
+}
+
+.restock-alert > button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.restock-success,
+.restock-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.restock-success {
+  color: #a8d9ac;
+}
+
+.restock-error {
+  color: #e3a198;
 }
 
 .qty-control {
@@ -4533,10 +4636,10 @@ select {
 
 .admin-variant-stock-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(130px, 170px) minmax(110px, auto);
-  align-items: center;
-  gap: 16px;
-  min-height: 72px;
+  grid-template-columns: minmax(92px, 0.9fr) minmax(105px, 0.9fr) minmax(105px, 0.85fr) minmax(115px, 0.9fr) minmax(98px, auto) 38px;
+  align-items: end;
+  gap: 10px;
+  min-height: 78px;
   padding: 12px 14px;
   border: 1px solid rgba(214, 166, 61, 0.2);
 }
@@ -4562,6 +4665,39 @@ select {
 .admin-stock-quantity {
   display: grid;
   gap: 4px;
+}
+
+.admin-variant-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-variant-field > span,
+.admin-stock-quantity > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-variant-field input,
+.admin-variant-field select,
+.admin-stock-quantity input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 6px 9px;
+  border: 1px solid rgba(214, 166, 61, 0.3);
+  background: #0b0908;
+  color: var(--cream);
+  outline: 0;
+}
+
+.admin-variant-field input:focus,
+.admin-variant-field select:focus,
+.admin-stock-quantity input:focus {
+  border-color: var(--gold);
 }
 
 .admin-stock-quantity > span {
@@ -4591,7 +4727,29 @@ select {
   grid-template-columns: auto auto;
   align-items: center;
   gap: 7px;
+  min-height: 38px;
   cursor: pointer;
+}
+
+.admin-variant-remove {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(217, 144, 127, 0.28);
+  color: #d9907f;
+}
+
+.admin-variant-actions {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 9px !important;
+  margin-top: 11px;
+}
+
+.admin-variant-actions .ghost-button {
+  min-height: 38px;
+  padding: 8px 13px;
 }
 
 .admin-variant-stock .variant-soldout-input {
@@ -5258,7 +5416,8 @@ select {
 .admin-editor-modal {
   display: grid;
   gap: 15px;
-  width: min(620px, calc(100vw - 32px));
+  width: min(1040px, calc(100vw - 32px));
+  max-height: min(900px, calc(100vh - 32px));
   padding: 0 24px 24px;
 }
 
@@ -5285,6 +5444,109 @@ select {
 
 .coupon-manager > .auth-error {
   margin: -8px 22px 18px;
+}
+
+.decant-pricing-manager {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 110;
+  display: grid;
+  gap: 18px;
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 40px));
+  padding: 0 24px 24px;
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(214, 171, 75, 0.4);
+  background: #110f0d;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.72);
+}
+
+.decant-pricing-manager > header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-inline: -24px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #110f0d;
+}
+
+.decant-pricing-manager > header > div,
+.decant-pricing-manager > header > div > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.decant-pricing-manager h2 {
+  margin: 3px 0 0;
+  font-family: var(--font-display);
+  font-size: 27px;
+  font-weight: 500;
+}
+
+.decant-pricing-manager > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.decant-pricing-list {
+  display: grid;
+  gap: 8px;
+}
+
+.decant-pricing-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) 38px;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(214, 166, 61, 0.2);
+}
+
+.decant-pricing-row label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.decant-pricing-row label > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.decant-pricing-row input,
+.decant-pricing-row select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 7px 9px;
+  border: 1px solid rgba(214, 166, 61, 0.3);
+  background: #090806;
+  color: var(--cream);
+}
+
+.decant-pricing-row > button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 40px;
+  border: 1px solid rgba(217, 144, 127, 0.3);
+  color: #d9907f;
+}
+
+.decant-rule-add {
+  justify-self: start;
 }
 
 .coupon-list {
@@ -5336,7 +5598,11 @@ select {
 }
 
 .admin-editor-modal > header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   margin-inline: -24px;
+  background: #110f0d;
 }
 
 .admin-editor-modal .eyebrow {
@@ -8651,6 +8917,25 @@ select {
   object-fit: contain;
 }
 
+@media (max-width: 980px) {
+  .admin-editor-modal {
+    width: min(760px, calc(100vw - 24px));
+  }
+
+  .admin-variant-stock-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-stock-soldout {
+    align-self: end;
+  }
+
+  .admin-variant-remove {
+    align-self: end;
+    justify-self: end;
+  }
+}
+
 /* Keep the catalogue compact and scannable on phones. */
 @media (max-width: 620px) {
   .listing-page .listing-showcase-grid,
@@ -8664,14 +8949,22 @@ select {
     min-height: 210px;
   }
 
-  .listing-page .home-new-copy > span,
-  .listing-page .home-new-copy > strong {
-    font-size: 11px;
+  .listing-page .home-new-copy > span {
+    font-size: 12px;
   }
 
-  .listing-page .home-new-copy > button {
-    min-height: 34px;
+  .listing-page .catalog-showcase-card .home-new-copy > button {
+    min-height: 42px;
+    font-size: 16px;
+    font-weight: 900;
+  }
+
+  .listing-page .home-new-brand {
     font-size: 10px;
+  }
+
+  .listing-page .home-new-copy > strong {
+    font-size: 13px;
   }
 
   .admin-inventory-actions {
@@ -8688,11 +8981,39 @@ select {
   }
 
   .admin-variant-stock-row {
-    grid-template-columns: minmax(72px, 1fr) minmax(105px, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-stock-soldout {
-    grid-column: 1 / -1;
+    grid-column: 1;
+  }
+
+  .admin-variant-remove {
+    grid-column: 1;
+    justify-self: end;
+  }
+
+  .decant-pricing-manager {
+    padding-inline: 16px;
+  }
+
+  .decant-pricing-manager > header {
+    margin-inline: -16px;
+    padding-inline: 16px;
+  }
+
+  .decant-pricing-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .restock-alert {
+    grid-template-columns: 1fr;
+  }
+
+  .restock-alert > div,
+  .restock-success,
+  .restock-error {
+    grid-column: 1;
   }
 }
 
