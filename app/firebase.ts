@@ -381,6 +381,11 @@ export async function saveFavoriteFolders(uid: string, folders: Array<{ id: stri
   await Promise.all(folders.map((folder) => setDoc(doc(database, "profiles", uid, "favoriteFolders", folder.id), cleanData(folder))));
 }
 
+export async function deleteFavoriteFolder(uid: string, folderId: string) {
+  if (!database) return;
+  await deleteDoc(doc(database, "profiles", uid, "favoriteFolders", folderId));
+}
+
 export type IfthenpayCheckoutResult = {
   orderId: string;
   amount: number;

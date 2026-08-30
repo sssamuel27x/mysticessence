@@ -24,9 +24,11 @@ test("server-renders the Mystic Essence storefront", async () => {
   assert.match(html, /Perfumaria Árabe/i);
   assert.match(html, /Perfumes Masculinos/i);
   assert.match(html, /Os meus favoritos/i);
-  assert.match(html, /Envios grátis para Portugal Continental a partir de/i);
-  assert.match(html, /Envios grátis para as ilhas a partir de/i);
-  assert.match(html, /Envios grátis para Espanha a partir de/i);
+  const banner = html.match(/<div class="announcement"[\s\S]*?<\/div><\/div>/)?.[0] ?? "";
+  assert.match(banner, /Envios grátis para Portugal Continental a partir de 85,00/i);
+  assert.doesNotMatch(banner, /ilhas|Espanha|Venha descobrir/i);
+  assert.equal((banner.match(/class="announcement-item"/g) ?? []).length, 8);
+  assert.equal((banner.match(/aria-hidden="true"><b>/g) ?? []).length, 7);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/i);
 });
 

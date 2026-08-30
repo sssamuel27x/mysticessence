@@ -12,6 +12,7 @@ import { SHIPPING_ZONE_IDS, getShippingCost, type ShippingZone } from "../functi
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import {
   createCheckout,
+  deleteFavoriteFolder,
   type IfthenpayCheckoutResult,
   firebaseEnabled,
   paymentsEnabled,
@@ -1562,26 +1563,16 @@ function Header({
 }) {
   const { brands } = useBrands();
   const { settings } = useShippingSettings();
-  const announcements = lang === "pt"
-    ? [
-        `Envios grátis para Portugal Continental a partir de ${price(settings.continental.freeFrom, lang)}`,
-        `Envios grátis para as ilhas a partir de ${price(settings.islands.freeFrom, lang)}`,
-        `Envios grátis para Espanha a partir de ${price(settings.spain.freeFrom, lang)}`,
-        "Venha descobrir a sua essência ideal na Mystic",
-      ]
-    : [
-        `Free shipping to mainland Portugal from ${price(settings.continental.freeFrom, lang)}`,
-        `Free shipping to the islands from ${price(settings.islands.freeFrom, lang)}`,
-        `Free shipping to Spain from ${price(settings.spain.freeFrom, lang)}`,
-        "Come and discover your ideal essence at Mystic",
-      ];
+  const announcement = lang === "pt"
+    ? `Envios grátis para Portugal Continental a partir de ${price(settings.continental.freeFrom, lang)}`
+    : `Free shipping to mainland Portugal from ${price(settings.continental.freeFrom, lang)}`;
   return (
     <header className="header">
       <div className="announcement" aria-label={lang === "pt" ? "Informações da loja" : "Store information"}>
         <div className="announcement-track">
-          {[...announcements, ...announcements].map((message, index) => (
-            <span className="announcement-item" key={`${message}-${index}`} aria-hidden={index >= announcements.length ? "true" : undefined}>
-              <b>{message}</b><i aria-hidden="true" />
+          {Array.from({ length: 8 }, (_, index) => (
+            <span className="announcement-item" key={index} aria-hidden={index > 0 ? "true" : undefined}>
+              <b>{announcement}</b><i aria-hidden="true" />
             </span>
           ))}
         </div>
@@ -2408,8 +2399,6 @@ function ProductDetail({
   const selectedSoldOut = selectedStock === 0 || Boolean(selectedVariant.soldout) || (!selectedVariant.isDecant && product.tag === "soldout");
   const maximumQuantity = selectedStock === null ? MAX_ORDER_QUANTITY : Math.max(1, Math.min(MAX_ORDER_QUANTITY, selectedStock));
   const isFavorite = favoriteFolders.some((folder) => folder.productIds.includes(product.id));
-  const hasNotes = [product.notes.top, product.notes.heart, product.notes.base]
-    .some((group) => group.pt.length > 0 || group.en.length > 0);
   const isDecant = selectedVariant.isDecant;
   const [restockEmail, setRestockEmail] = useState(session?.email ?? "");
   const [restockBusy, setRestockBusy] = useState(false);
@@ -2573,17 +2562,6 @@ function ProductDetail({
         </section>
       )}
 
-      {hasNotes && <div className="notes-section">
-        <span className="eyebrow">{t.signature}</span>
-        <h2>{t.journey}</h2>
-        <p>{t.journeySub}</p>
-        <div className="notes-grid">
-          <NoteCard title={t.top} notes={product.notes.top[lang]} image="citrus" />
-          <NoteCard title={t.heart} notes={product.notes.heart[lang]} image="herbal" />
-          <NoteCard title={t.base} notes={product.notes.base[lang]} image="woods" />
-        </div>
-      </div>}
-
       <ProductReviews product={product} lang={lang} session={session} orders={orders} onLogin={onLogin} />
 
       <section className="related-section">
@@ -2731,18 +2709,6 @@ function ProductReviews({
 
 function ReviewStars({ rating }: { rating: number }) {
   return <div className="review-stars" aria-hidden="true">{[1, 2, 3, 4, 5].map((value) => <Star key={value} size={17} fill={value <= rating ? "currentColor" : "none"} />)}</div>;
-}
-
-function NoteCard({ title, notes, image }: { title: string; notes: string[]; image: string }) {
-  return (
-    <article className="note-card">
-      <div className={`note-image ${image}`} />
-      <h3>{title}</h3>
-      <ul>
-        {notes.map((note) => <li key={note}>{note}</li>)}
-      </ul>
-    </article>
-  );
 }
 
 function ProductGallery({ product, lang }: { product: Product; lang: Lang }) {
@@ -2939,6 +2905,14 @@ function AccountPage({
       setFavoriteFolders((folders) => [...folders, { id: `folder-${Date.now()}`, name, productIds: [] }]);
       setFolderName("");
     };
+    const removeFolder = async (folder: FavoriteFolder) => {
+      const confirmed = window.confirm(lang === "pt"
+        ? `Eliminar a pasta “${folder.name}”? Os produtos guardados nela deixam de estar nos favoritos.`
+        : `Delete the “${folder.name}” folder? Products saved in it will no longer be favourites.`);
+      if (!confirmed) return;
+      setFavoriteFolders((folders) => folders.filter((item) => item.id !== folder.id));
+      await deleteFavoriteFolder(session.uid, folder.id);
+    };
     return (
       <section className={`account-hub ${favoritesOnly ? "favorites-page" : ""} ${session.isInfluencer ? "influencer-account" : ""}`}>
         <header className="account-hub-header">
@@ -2954,7 +2928,7 @@ function AccountPage({
           </div>
         </header>
 
-        {!favoritesOnly && <div className="account-overview">
+        {!favoritesOnly && <div className={`account-overview ${session.isInfluencer ? "" : "customer-overview"}`}>
           {session.isInfluencer ? <>
             <article><TicketPercent size={20} /><span>{lang === "pt" ? "Usos este mês" : "Uses this month"}</span><strong>{currentMonthUses.length}</strong></article>
             <article><ReceiptText size={20} /><span>{lang === "pt" ? "Comissão do mês" : "Monthly commission"}</span><strong>{price(monthCommission, lang)}</strong></article>
@@ -2962,7 +2936,6 @@ function AccountPage({
           </> : <>
             <article><Heart size={20} /><span>{lang === "pt" ? "Favoritos" : "Favourites"}</span><strong>{favoriteCount}</strong></article>
             <article><ShoppingBag size={20} /><span>{lang === "pt" ? "Encomendas" : "Orders"}</span><strong>{customerOrders.length}</strong></article>
-            <article><Tag size={20} /><span>{lang === "pt" ? "Cupões" : "Coupons"}</span><strong>2</strong></article>
           </>}
         </div>}
 
@@ -3001,7 +2974,13 @@ function AccountPage({
                   const folderProducts = folder.productIds.map((id) => products.find((product) => product.id === id)).filter((product): product is Product => Boolean(product));
                   return (
                     <article className="favorite-folder" key={folder.id}>
-                      <header><div><Folder size={17} /><strong>{folder.name}</strong></div><span>{folderProducts.length}</span></header>
+                      <header>
+                        <div><Folder size={17} /><strong>{folder.name}</strong></div>
+                        <div className="favorite-folder-actions">
+                          <span aria-label={lang === "pt" ? `${folderProducts.length} produtos` : `${folderProducts.length} products`}>{folderProducts.length}</span>
+                          <button type="button" onClick={() => void removeFolder(folder)} aria-label={lang === "pt" ? `Eliminar pasta ${folder.name}` : `Delete folder ${folder.name}`} title={lang === "pt" ? "Eliminar pasta" : "Delete folder"}><Trash2 size={16} /></button>
+                        </div>
+                      </header>
                       {folderProducts.length === 0 ? <p>{lang === "pt" ? "Pasta vazia" : "Empty folder"}</p> : (
                         <div className="folder-products">
                           {folderProducts.map((product) => (
@@ -3020,11 +2999,6 @@ function AccountPage({
           </section>
 
           {!favoritesOnly && <aside className="account-side-stack">
-            <section className="account-panel coupon-panel">
-              <header><Tag size={19} /><h2>{lang === "pt" ? "Cupões disponíveis" : "Available coupons"}</h2></header>
-              <div className="coupon"><strong>MYSTIC10</strong><span>{lang === "pt" ? "10% na próxima compra" : "10% off your next purchase"}</span></div>
-              <div className="coupon"><strong>ENVIO85</strong><span>{lang === "pt" ? "Envio grátis a partir de 85 €" : "Free shipping from €85"}</span></div>
-            </section>
             <section className="account-panel order-history-panel">
               <header><History size={19} /><h2>{lang === "pt" ? "Encomendas e histórico" : "Orders and history"}</h2></header>
               {customerOrders.length === 0 ? <p className="muted-copy">{copy.orders}</p> : customerOrders.map((order) => {
