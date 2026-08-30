@@ -5,8 +5,8 @@ export const metadata: Metadata = {
   title: "Mystic Essence | Perfumaria Árabe",
   description: "Mockup ecommerce para Mystic Essence, perfumaria árabe em Santa Maria da Feira.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: { url: "/favicon.png", type: "image/png", sizes: "192x192" },
+    shortcut: "/favicon.png",
   },
 };
 

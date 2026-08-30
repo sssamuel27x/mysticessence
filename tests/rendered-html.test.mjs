@@ -21,6 +21,7 @@ test("server-renders the Mystic Essence storefront", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Mystic Essence \| Perfumaria Árabe<\/title>/i);
+  assert.match(html, /<link\b[^>]*rel="icon"[^>]*href="\/favicon\.png"/);
   assert.match(html, /Perfumaria Árabe/i);
   assert.match(html, /Perfumes Masculinos/i);
   assert.match(html, /Os meus favoritos/i);
@@ -30,6 +31,16 @@ test("server-renders the Mystic Essence storefront", async () => {
   assert.equal((banner.match(/class="announcement-item"/g) ?? []).length, 8);
   assert.equal((banner.match(/aria-hidden="true"><b>/g) ?? []).length, 7);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/i);
+});
+
+test("provides a square PNG favicon in the static homepage", async () => {
+  const html = await readFile(new URL("../netlify/index.html", import.meta.url), "utf8");
+  assert.match(html, /<link\b[^>]*rel="icon"[^>]*type="image\/png"[^>]*sizes="192x192"[^>]*href="\/favicon\.png"/);
+  const icon = await readFile(new URL("../public/favicon.png", import.meta.url));
+  assert.deepEqual([...icon.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(icon.toString("ascii", 12, 16), "IHDR");
+  assert.equal(icon.readUInt32BE(16), 192);
+  assert.equal(icon.readUInt32BE(20), 192);
 });
 
 test("keeps admin pricing protected and its product editor responsive", async () => {
