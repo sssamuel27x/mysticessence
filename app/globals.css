@@ -5652,6 +5652,63 @@ select {
   gap: 8px;
 }
 
+.decant-availability {
+  min-width: 0;
+  padding-block: 4px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.decant-availability h3 {
+  margin: 0 0 14px;
+  color: var(--gold);
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+.decant-availability fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.decant-availability legend { padding: 0 0 8px; color: var(--muted); font-size: 12px; }
+
+.decant-availability-sizes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.decant-availability-sizes label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 10px 12px;
+  background: rgba(214, 171, 75, 0.05);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.decant-availability-sizes label:has(input:checked) { border-color: var(--gold); }
+.decant-availability-sizes strong { font-size: 17px; white-space: nowrap; }
+.decant-availability-sizes span { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.decant-availability-sizes input { appearance: auto; width: 20px; height: 20px; margin: 0; accent-color: #c49a38; cursor: pointer; }
+.decant-availability .ghost-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; max-width: 100%; white-space: normal; }
+.decant-availability-message { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 620px) {
+  .decant-pricing-manager > header > div { min-width: 0; }
+  .decant-pricing-manager > header > div > div { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .decant-pricing-manager > header .eyebrow { font-size: 9px; }
+  .decant-pricing-manager > header h2 { font-size: 22px; }
+  .decant-pricing-manager > header svg { flex-shrink: 0; }
+}
+
 .decant-pricing-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr)) 38px;

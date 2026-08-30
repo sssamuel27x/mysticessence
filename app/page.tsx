@@ -6,6 +6,8 @@ import { PRODUCT_IMAGE_IDS } from "./product-images";
 import { getProductImages, productImageFields, validateProductImageFiles, MAX_PRODUCT_IMAGES, type ProductImage } from "./product-gallery";
 import { LEGAL_DOCUMENTS, type LegalKind } from "./legal-content";
 import { ShippingSettingsProvider, ShippingSettingsDialog, useShippingSettings } from "./shipping-settings";
+import { DecantAvailabilityProvider, DecantAvailabilityControls, useDecantAvailability } from "./decant-availability";
+import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
 import { SHIPPING_ZONE_IDS, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
@@ -1019,7 +1021,7 @@ function usePromotionClock(product: Product) {
 }
 
 export default function Home() {
-  return <ShippingSettingsProvider><Storefront /></ShippingSettingsProvider>;
+  return <ShippingSettingsProvider><DecantAvailabilityProvider><Storefront /></DecantAvailabilityProvider></ShippingSettingsProvider>;
 }
 
 function Storefront() {
@@ -1028,7 +1030,9 @@ function Storefront() {
   const [legalKind, setLegalKind] = useState<LegalKind>("terms");
   const [cookieChoice, setCookieChoice] = useState<"accepted" | "rejected" | null>(null);
   const [cookiePanelOpen, setCookiePanelOpen] = useState(false);
-  const [catalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [rawCatalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
+  const { blockedSizes, ready: decantsReady, error: decantsError } = useDecantAvailability();
+  const catalog = useMemo(() => rawCatalog.map((product) => applyDecantAvailability(product, blockedSizes)), [rawCatalog, blockedSizes]);
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authTransition, setAuthTransition] = useState(false);
@@ -1294,6 +1298,7 @@ function Storefront() {
 
   function addToCart(product: Product, quantity = 1) {
     const selectedVariant = product.variants.find((variant) => variant.volume === product.volume) ?? product.variants[0];
+    if (selectedVariant?.isDecant && (!decantsReady || decantsError || isDecantBlocked(selectedVariant, blockedSizes))) return;
     const stockLimit = typeof selectedVariant?.stock === "number" ? Math.max(0, selectedVariant.stock) : MAX_ORDER_QUANTITY;
     const isUnavailable = stockLimit === 0 || Boolean(selectedVariant?.soldout) || (!selectedVariant?.isDecant && product.tag === "soldout");
     if (isUnavailable) return;
@@ -1449,7 +1454,7 @@ function Storefront() {
         {view === "admin" && session?.role === "admin" && (
           <AdminPage
             lang={lang}
-            products={catalog}
+            products={rawCatalog}
             setProducts={setCatalog}
             orders={orders}
             setOrders={setOrders}
@@ -3536,6 +3541,7 @@ function AdminPage({
         <button className="modal-backdrop" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel} />
         <form className="decant-pricing-manager" onSubmit={applyGlobalDecantRules} role="dialog" aria-modal="true" aria-labelledby="decant-pricing-title">
           <header><div><SlidersHorizontal size={20} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="decant-pricing-title">{lang === "pt" ? "Preços gerais dos decants" : "Global decant prices"}</h2></div></div><button type="button" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel}><X size={20} /></button></header>
+          <DecantAvailabilityControls lang={lang} disabled={adminBusy} />
           <p>{lang === "pt" ? "Cada regra aplica um preço de decant aos perfumes cujo preço do frasco esteja dentro do intervalo." : "Each rule applies a decant price to bottles whose price is within the range."}</p>
           <div className="decant-pricing-list">
             {decantPricingRules.map((rule) => <div className="decant-pricing-row" key={rule.id}>
@@ -3902,6 +3908,10 @@ function CheckoutPage({
   });
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
+  const { blockedSizes, ready: decantsReady, error: decantsError } = useDecantAvailability();
+  const cartDecants = cart.map((item) => item.variants.find((variant) => variant.volume === item.volume)).filter((variant) => variant?.isDecant);
+  const blockedDecantInCart = cartDecants.some((variant) => isDecantBlocked(variant, blockedSizes));
+  const decantCheckoutBlocked = cartDecants.length > 0 && (!decantsReady || Boolean(decantsError) || blockedDecantInCart);
   const [couponInput, setCouponInput] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<Pick<Coupon, "code" | "discount"> | null>(null);
   const [couponMessage, setCouponMessage] = useState("");
@@ -3947,7 +3957,7 @@ function CheckoutPage({
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (shippingBlocked || !selectedCarrier || checkoutBusy || cart.length === 0) return;
+    if (shippingBlocked || decantCheckoutBlocked || !selectedCarrier || checkoutBusy || cart.length === 0) return;
     const form = new FormData(event.currentTarget);
     const createdAt = new Date().toISOString();
     const customerName = String(form.get("name") ?? "").trim();
@@ -4216,9 +4226,10 @@ function CheckoutPage({
             </strong>
           </label>
           {checkoutError && <p className="auth-error" role="alert">{checkoutError}</p>}
+          {decantCheckoutBlocked && <p className="auth-error" role="alert">{blockedDecantInCart ? (lang === "pt" ? "Um tamanho de decant no carrinho está esgotado. Retire-o antes de continuar." : "A decant size in your cart is sold out. Remove it before continuing.") : (lang === "pt" ? "A aguardar confirmação da disponibilidade dos decants." : "Waiting for decant availability confirmation.")}</p>}
           {shippingError && <p className="auth-error" role="alert">{shippingError}</p>}
           {firebaseEnabled && previewChanged && <p className="shipping-settings-notice" role="status">{lang === "pt" ? "Portes em teste local. Para evitar cobranças com valores diferentes, o pagamento fica indisponível até publicar estas configurações no servidor." : "Shipping rates are in local preview. Payment is unavailable until these settings are published to the server, to prevent a different charge."}</p>}
-          <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy || shippingBlocked}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
+          <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy || shippingBlocked || decantCheckoutBlocked}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
           <p className="secure-note"><LockKeyhole size={14} />{copy.secure}</p>
         </aside>
       </form>

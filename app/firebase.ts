@@ -28,6 +28,8 @@ import { validateProductImageFiles } from "./product-gallery";
 import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
 import { brandKey } from "./brand-catalogue";
 import { DEFAULT_DECANT_PRICING, isValidDecantPricing, normalizeDecantPricing, type DecantPricingRule } from "../functions/decant-pricing.mjs";
+import { normalizeBlockedDecantSizes } from "../functions/decant-availability.mjs";
+import type { DecantSize } from "../functions/decant-pricing.mjs";
 
 type PublicEnv = Record<string, string | undefined>;
 
@@ -225,6 +227,29 @@ export async function saveDecantPricing(rules: DecantPricingRule[]) {
   if (!database) throw new Error("Firebase não está configurado.");
   if (!isValidDecantPricing(rules)) throw new Error("Regras de preços de decants inválidas.");
   await setDoc(doc(database, "settings", "decants"), { rules: cleanData(rules), updatedAt: new Date().toISOString() });
+}
+
+export function watchDecantAvailability(callback: (sizes: DecantSize[]) => void, onError: (error: Error) => void) {
+  if (!database) { onError(new Error("Firebase não está configurado.")); return () => undefined; }
+  return onSnapshot(doc(database, "settings", "decantAvailability"), { includeMetadataChanges: true }, (snapshot) => {
+    if (snapshot.metadata.hasPendingWrites) return;
+    try { callback(normalizeBlockedDecantSizes(snapshot.data()?.blockedSizes)); }
+    catch { onError(new Error("A disponibilidade dos decants é inválida.")); }
+  }, onError);
+}
+
+export async function saveDecantAvailability(sizes: DecantSize[]) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  const blockedSizes = normalizeBlockedDecantSizes(sizes);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      setDoc(doc(database, "settings", "decantAvailability"), { blockedSizes }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Sem confirmação do servidor. Reabra o painel para confirmar a disponibilidade.")), 10000);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 export function watchBrands(callback: (names: string[]) => void, onError: (error: Error) => void) {

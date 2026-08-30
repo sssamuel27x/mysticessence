@@ -54,6 +54,41 @@ test("checkout without a real payment provider cannot create a free order", asyn
   await assert.rejects(createPendingOrder.run(checkoutRequest("912345678")), { code: "failed-precondition" });
 });
 
+for (const size of [2, 5, 10]) {
+  test(`global ${size}ml block rejects stale carts before payment or inventory writes`, async (t) => {
+    const state = setup(t);
+    state.documents.set("settings/decantAvailability", { blockedSizes: [size] });
+    state.documents.get("products/test-perfume").variants.push({ volume: `${size}ml`, price: 2, isDecant: true, stock: 10 });
+    const request = checkoutRequest("912345678");
+    request.data.items[0].volume = `${size}ml`;
+    await assert.rejects(createCheckout.run(request), { code: "failed-precondition" });
+    assert.equal(state.fetch.mock.callCount(), 0);
+    assert.equal(state.documents.get("products/test-perfume").variants[1].stock, 10);
+    assert.equal([...state.documents.keys()].some((key) => key.startsWith("orders/")), false);
+  });
+}
+
+test("global decant blocks do not prevent full-bottle checkout", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantAvailability", { blockedSizes: [2, 5, 10] });
+  await createCheckout.run(checkoutRequest("912345678"));
+  assert.equal(state.fetch.mock.callCount(), 1);
+});
+
+test("releasing a block permits decants but does not override individual stock", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantAvailability", { blockedSizes: [] });
+  state.documents.get("products/test-perfume").variants.push({ volume: "2ml", price: 2, isDecant: true, stock: 0 });
+  const request = checkoutRequest("912345678");
+  request.data.items[0].volume = "2ml";
+  await assert.rejects(createCheckout.run(request), { code: "failed-precondition" });
+  assert.equal(state.fetch.mock.callCount(), 0);
+  state.documents.get("products/test-perfume").variants[1].stock = 10;
+  await createCheckout.run(request);
+  assert.equal(state.fetch.mock.callCount(), 1);
+  assert.equal(state.documents.get("products/test-perfume").variants[1].stock, 8);
+});
+
 test("admin can associate an existing account with one exclusive influencer coupon", async (t) => {
   const state = setup(t);
   state.documents.set("profiles/influencer-user", { name: "Catarina", email: "catarina@example.invalid" });

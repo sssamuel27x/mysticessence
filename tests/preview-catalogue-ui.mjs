@@ -11,7 +11,7 @@ const pagePath = resolve(root, "app/page.tsx");
 const source = readFileSync(pagePath, "utf8");
 const ast = ts.createSourceFile(pagePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const firebaseImport = ast.statements.find((node) => ts.isImportDeclaration(node) && node.moduleSpecifier.text === "./firebase");
-const firebaseExports = [...new Set([...firebaseImport.importClause.namedBindings.elements.filter((node) => !node.isTypeOnly).map((node) => node.propertyName?.text ?? node.name.text), 'watchShippingSettings', 'saveShippingSettings', 'watchBrands', 'saveBrand'])];
+const firebaseExports = [...new Set([...firebaseImport.importClause.namedBindings.elements.filter((node) => !node.isTypeOnly).map((node) => node.propertyName?.text ?? node.name.text), 'watchShippingSettings', 'saveShippingSettings', 'watchBrands', 'saveBrand', 'watchDecantAvailability', 'saveDecantAvailability'])];
 const mocks = firebaseExports.map((name) => `export const ${name} = ${name === "storageEnabled" ? "true" : name.endsWith("Enabled") ? "false" : name === "uploadProductImage"
   ? "async (_id, file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({imageUrl:reader.result}); reader.onerror = reject; reader.readAsDataURL(file); })"
   : "() => { throw new Error('Firebase is disabled in the isolated preview'); }"};`).join("\n");
@@ -22,6 +22,8 @@ import { createRoot } from 'react-dom/client';
 import { AdminPage, AccountPage, ProductGallery, CheckoutPage, BrandBand, ProductDetail, PRODUCTS, COPY } from '/app/page.tsx';
 import { ShippingSettingsProvider } from '/app/shipping-settings.tsx';
 import { BrandsProvider } from '/app/brand-settings.tsx';
+import { DecantAvailabilityProvider, useDecantAvailability } from '/app/decant-availability.tsx';
+import { applyDecantAvailability } from '/functions/decant-availability.mjs';
 import { productsForBrand } from '/app/brand-catalogue.ts';
 import '/app/globals.css';
 const noop = () => {};
@@ -33,6 +35,7 @@ const samples = [
   make('Creme', {category:'Outros produtos', audiences:[], brand:'Lattafa', variants:[{volume:'200ml',price:15}]})
 ];
 function Fixture() {
+  const {blockedSizes} = useDecantAvailability();
   const [products,setProducts] = useState(samples);
   const [folders,setFolders] = useState([{id:'daily',name:'Dia a dia',productIds:['Cedro']}]);
   const [page,setPage] = useState('admin');
@@ -44,7 +47,7 @@ function Fixture() {
     : page==='brands'
     ? <><BrandBand onBrand={setChosenBrand}/><h1>{chosenBrand}</h1><ul aria-label="Brand products">{productsForBrand(products,chosenBrand).map(p=><li key={p.id}>{p.name.pt}</li>)}</ul></>
     : page==='detail'
-    ? <ProductDetail t={COPY.pt} lang="pt" product={products[0]} products={products} onListing={noop} onProduct={noop} onCart={noop} onFavorite={noop} favoriteFolders={[]} session={null} orders={[]} onLogin={noop}/>
+    ? <ProductDetail t={COPY.pt} lang="pt" product={applyDecantAvailability(products[0],blockedSizes)} products={products} onListing={noop} onProduct={noop} onCart={noop} onFavorite={noop} favoriteFolders={[]} session={null} orders={[]} onLogin={noop}/>
     : page==='gallery'
     ? <main style={{width:'min(100%, 600px)',margin:'auto'}}><ProductGallery key={products[0].id} lang="pt" product={products[0]}/></main>
     : page==='admin'
@@ -52,7 +55,7 @@ function Fixture() {
     : <AccountPage favoritesOnly favoritesReady lang="pt" session={session} products={products} orders={[]} favoriteFolders={folders} setFavoriteFolders={setFolders} onProduct={noop} onSession={noop} onLogout={noop} onShop={noop}/>
   }</BrandsProvider></ShippingSettingsProvider>;
 }
-createRoot(document.getElementById('root')).render(<Fixture/>);
+createRoot(document.getElementById('root')).render(<DecantAvailabilityProvider><Fixture/></DecantAvailabilityProvider>);
 `;
 
 const server = await createServer({

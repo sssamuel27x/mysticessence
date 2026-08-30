@@ -4,6 +4,7 @@ const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { HttpsError, onCall, onRequest } = require("firebase-functions/v2/https");
+const { normalizeBlockedDecantSizes, variantUnavailable } = require("./decant-availability.mjs");
 
 initializeApp();
 const db = getFirestore();
@@ -178,6 +179,8 @@ async function createOrderRecord(request, paymentMode) {
   const orderId = `ME${Date.now().toString(36).slice(-8)}${Math.random().toString(36).slice(2, 5)}`.toUpperCase().slice(0, 15);
   const orderRef = db.collection("orders").doc(orderId);
   const order = await db.runTransaction(async (transaction) => {
+    const availabilitySnapshot = await transaction.get(db.collection("settings").doc("decantAvailability"));
+    const blockedSizes = normalizeBlockedDecantSizes(availabilitySnapshot.data()?.blockedSizes);
     const shippingSnapshot = await transaction.get(db.collection("settings").doc("shipping"));
     const shippingSettings = shippingSnapshot.exists ? normalizeShippingSettings(shippingSnapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS;
     if (!shippingSettings) {
@@ -218,7 +221,7 @@ async function createOrderRecord(request, paymentMode) {
       const variant = (product.variants || []).find((entry) => entry.volume === requested.volume);
       const productName = product.name?.pt || product.name || requested.productId;
       if (!variant) throw new HttpsError("invalid-argument", `Tamanho inválido para ${productName}.`);
-      if (variant.soldout || variant.stock === 0 || (!variant.isDecant && product.tag === "soldout")) {
+      if (variantUnavailable(product, variant, blockedSizes)) {
         throw new HttpsError("failed-precondition", `${productName} ${requested.volume} está esgotado.`);
       }
       const totalRequested = requestedByVariant.get(`${requested.productId}::${requested.volume}`) || requested.quantity;
@@ -490,11 +493,6 @@ exports.submitReview = onCall({ region }, async (request) => {
   return { reviewId };
 });
 
-function variantUnavailable(product, variant) {
-  if (!variant) return true;
-  return variant.stock === 0 || variant.soldout === true || (!variant.isDecant && product.tag === "soldout");
-}
-
 exports.subscribeToRestock = onCall({ region }, async (request) => {
   const productId = text(request.data?.productId, 120).replace(/^decant-/, "").split("--")[0];
   const volume = text(request.data?.volume, 30);
@@ -508,7 +506,9 @@ exports.subscribeToRestock = onCall({ region }, async (request) => {
   const product = productSnapshot.data();
   const variant = Array.isArray(product.variants) ? product.variants.find((item) => text(item.volume, 30) === volume) : null;
   if (!variant) throw new HttpsError("not-found", "Este tamanho já não existe.");
-  if (!variantUnavailable(product, variant)) throw new HttpsError("failed-precondition", "Este tamanho já está disponível.");
+  const availability = await db.collection("settings").doc("decantAvailability").get();
+  const blockedSizes = normalizeBlockedDecantSizes(availability.data()?.blockedSizes);
+  if (!variantUnavailable(product, variant, blockedSizes)) throw new HttpsError("failed-precondition", "Este tamanho já está disponível.");
 
   const subscriptionId = createHash("sha256").update(`${productId}:${volume}:${email}`).digest("hex").slice(0, 48);
   await db.collection("restockSubscriptions").doc(subscriptionId).set({
@@ -738,16 +738,51 @@ exports.notifyRestockSubscribers = onDocumentUpdated({ document: "products/{prod
   if (productId.startsWith("decant-")) return;
   const before = event.data.before.data();
   const after = event.data.after.data();
+  const availability = await db.collection("settings").doc("decantAvailability").get();
+  const blockedSizes = normalizeBlockedDecantSizes(availability.data()?.blockedSizes);
   const beforeVariants = new Map((before.variants || []).map((variant) => [text(variant.volume, 30), variant]));
   const availableVolumes = (after.variants || [])
-    .filter((variant) => variantUnavailable(before, beforeVariants.get(text(variant.volume, 30))) && !variantUnavailable(after, variant))
+    .filter((variant) => variantUnavailable(before, beforeVariants.get(text(variant.volume, 30)), blockedSizes) && !variantUnavailable(after, variant, blockedSizes))
     .map((variant) => text(variant.volume, 30));
   if (!availableVolumes.length) return;
-
   const subscriptions = await db.collection("restockSubscriptions").where("productId", "==", productId).get();
+  await sendRestockNotifications(productId, after, availableVolumes, subscriptions.docs);
+});
+
+exports.notifyGlobalDecantRestock = onDocumentUpdated({ document: "settings/decantAvailability", region }, async (event) => {
+  const beforeSizes = normalizeBlockedDecantSizes(event.data.before.data()?.blockedSizes);
+  const afterSizes = normalizeBlockedDecantSizes(event.data.after.data()?.blockedSizes);
+  if (!beforeSizes.some((size) => !afterSizes.includes(size))) return;
+  const subscriptions = await db.collection("restockSubscriptions").where("active", "==", true).get();
+  const groups = new Map();
+  for (const subscription of subscriptions.docs) {
+    const productId = subscription.data().productId;
+    if (!groups.has(productId)) groups.set(productId, []);
+    groups.get(productId).push(subscription);
+  }
+  for (const [productId, documents] of groups) {
+    const snapshot = await db.collection("products").doc(productId).get();
+    if (!snapshot.exists) continue;
+    const product = snapshot.data();
+    const availableVolumes = (product.variants || [])
+      .filter((variant) => variantUnavailable(product, variant, beforeSizes) && !variantUnavailable(product, variant, afterSizes))
+      .map((variant) => text(variant.volume, 30));
+    if (availableVolumes.length) await sendRestockNotifications(productId, product, availableVolumes, documents);
+  }
+});
+
+async function sendRestockNotifications(productId, after, availableVolumes, subscriptions) {
+  // Recheck current inventory so delayed events cannot announce a size blocked again meanwhile.
+  const availability = await db.collection("settings").doc("decantAvailability").get();
+  const currentProduct = await db.collection("products").doc(productId).get();
+  if (!currentProduct.exists) return;
+  const blockedSizes = normalizeBlockedDecantSizes(availability.data()?.blockedSizes);
+  const current = currentProduct.data();
+  availableVolumes = availableVolumes.filter((volume) => !variantUnavailable(current, (current.variants || []).find((variant) => text(variant.volume, 30) === volume), blockedSizes));
+  if (!availableVolumes.length) return;
   const productName = text(after.name?.pt || after.name?.en || productId, 160);
   const baseUrl = publicSiteUrl.value().replace(/\/$/, "");
-  await Promise.all(subscriptions.docs.map(async (subscriptionDocument) => {
+  await Promise.all(subscriptions.map(async (subscriptionDocument) => {
     const subscription = subscriptionDocument.data();
     if (!subscription.active || !availableVolumes.includes(text(subscription.volume, 30))) return;
     const isEnglish = subscription.language === "en";
@@ -759,4 +794,4 @@ exports.notifyRestockSubscribers = onDocumentUpdated({ document: "products/{prod
     await queueEmail(subscription.email, `${title} · Mystic Essence`, body, `restock-${subscriptionDocument.id}-${Date.now()}`);
     await subscriptionDocument.ref.update({ active: false, notifiedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   }));
-});
+}
