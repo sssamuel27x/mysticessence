@@ -1841,6 +1841,7 @@ function Header({
                   {brands.map((brand) => <button type="button" key={brandKey(brand)} onClick={() => onBrand(brand)}>{brand}</button>)}
                 </div>
               </details>
+              <button onClick={() => onListing("best")}><span>{t.nav.best}</span><ChevronRight size={17} /></button>
               <button onClick={() => onListing("new")}><span>{t.nav.newIn}</span><ChevronRight size={17} /></button>
               <button onClick={() => onListing("sale")}><span>{t.nav.sale}</span><ChevronRight size={17} /></button>
               <button className="mobile-account-link" onClick={() => { setMobileOpen(false); onAccount(); }}>

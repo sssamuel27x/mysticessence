@@ -125,6 +125,7 @@ test("mobile header exposes a direct, focused catalogue search", () => {
   assert.match(header, /mobileSearchInput\.current\?\.focus\(\)/);
   assert.match(header, /className="mobile-header-search-panel"/);
   assert.match(header, /setMobileSearchOpen\(false\); onProduct\(product\.id\)/);
+  assert.match(header, /className="mobile-nav"[\s\S]*onListing\("best"\)[\s\S]*onListing\("new"\)/);
 });
 
 test("home no longer contains hero actions or the store strip", () => {
