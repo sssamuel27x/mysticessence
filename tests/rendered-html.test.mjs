@@ -65,6 +65,12 @@ test("keeps admin pricing protected and its product editor responsive", async ()
   assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*minmax\(0, 1fr\)/);
   assert.match(css, /\.listing-page \.filters\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.listing-page \.listing-hero\s*\{[^}]*min-height:\s*auto/);
+  assert.match(page, /className="cart-shipping-track"[\s\S]*role="progressbar"/);
+  assert.match(page, /onClick=\{\(\) => onUpdate\(item\.id,/);
+  assert.match(page, /onClick=\{\(\) => onRemove\(item\.id\)\}/);
+  assert.match(page, /className="primary-button" onClick=\{onCheckout\}|className="primary-button cart-checkout-button" onClick=\{onCheckout\}/);
+  assert.match(css, /\.cart-drawer\s*\{[^}]*width:\s*min\(580px, 100vw\)/s);
+  assert.match(css, /\.cart-summary\s*\{[^}]*safe-area-inset-bottom/s);
   assert.match(firestoreRules, /match \/settings\/decants/);
   assert.match(firestoreRules, /match \/settings\/decantStock/);
   assert.match(firestoreRules, /allow create, update: if isAdmin\(\)/);

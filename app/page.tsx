@@ -4818,50 +4818,113 @@ function CartDrawer({
   onRemove: (id: string) => void;
   onCheckout: () => void;
 }) {
+  const { settings: shippingSettings } = useShippingSettings();
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
+  const freeShippingTarget = shippingSettings.continental.freeFrom;
+  const freeShippingRemaining = Math.max(0, freeShippingTarget - subtotal);
+  const freeShippingProgress = freeShippingTarget > 0 ? Math.min(100, (subtotal / freeShippingTarget) * 100) : 100;
+  const itemCountLabel = lang === "pt"
+    ? `${itemCount} ${itemCount === 1 ? "artigo" : "artigos"}`
+    : `${itemCount} ${itemCount === 1 ? "item" : "items"}`;
   return (
     <>
       <button className={`drawer-backdrop ${open ? "visible" : ""}`} hidden={!open} onClick={onClose} aria-label={lang === "pt" ? "Fechar carrinho" : "Close cart"} />
-      <aside className={`cart-drawer ${open ? "open" : ""}`} hidden={!open} aria-hidden={!open}>
-        <header>
-          <h2>{t.cart}</h2>
-          <button onClick={onClose} aria-label={lang === "pt" ? "Fechar carrinho" : "Close cart"}><X size={22} /></button>
+      <aside
+        className={`cart-drawer ${open ? "open" : ""}`}
+        hidden={!open}
+        aria-hidden={!open}
+        aria-labelledby="cart-drawer-title"
+        aria-modal="true"
+        role="dialog"
+      >
+        <span className="cart-drawer-accent" aria-hidden="true" />
+        <header className="cart-drawer-header">
+          <div className="cart-title-lockup">
+            <span className="cart-eyebrow">{lang === "pt" ? "A tua seleção" : "Your selection"}</span>
+            <div>
+              <h2 id="cart-drawer-title">{t.cart}</h2>
+              {itemCount > 0 && <span className="cart-count" aria-live="polite">{itemCountLabel}</span>}
+            </div>
+          </div>
+          <button className="cart-close-button" type="button" onClick={onClose} aria-label={lang === "pt" ? "Fechar carrinho" : "Close cart"}><X size={21} /></button>
         </header>
         {cart.length === 0 ? (
           <div className="empty-cart">
-            <ShoppingBag size={34} />
+            <div className="empty-cart-mark" aria-hidden="true"><ShoppingBag size={34} /></div>
+            <span className="cart-eyebrow">Mystic Essence</span>
             <p>{t.empty}</p>
             <span>{t.emptySub}</span>
+            <button type="button" className="cart-discover-button" onClick={onClose}>
+              {lang === "pt" ? "Continuar a descobrir" : "Continue discovering"}
+              <ChevronRight size={17} />
+            </button>
           </div>
         ) : (
           <>
-            <div className="cart-items">
+            <section className={`cart-shipping-progress ${freeShippingRemaining === 0 ? "earned" : ""}`} aria-label={lang === "pt" ? "Progresso para portes grátis" : "Free shipping progress"}>
+              <div className="cart-shipping-copy">
+                <span className="cart-shipping-icon" aria-hidden="true"><Truck size={19} /></span>
+                <div>
+                  <strong>{freeShippingRemaining === 0
+                    ? (lang === "pt" ? "Portes grátis conquistados" : "Free shipping unlocked")
+                    : (lang === "pt" ? `Faltam ${price(freeShippingRemaining, lang)} para portes grátis` : `${price(freeShippingRemaining, lang)} away from free shipping`)}</strong>
+                  <small>{lang === "pt" ? "Em Portugal Continental" : "In mainland Portugal"}</small>
+                </div>
+              </div>
+              <div
+                className="cart-shipping-track"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={freeShippingTarget}
+                aria-valuenow={Math.min(subtotal, freeShippingTarget)}
+              >
+                <span style={{ width: `${freeShippingProgress}%` }} />
+              </div>
+            </section>
+            <div className="cart-items" aria-label={lang === "pt" ? "Artigos no carrinho" : "Items in cart"}>
               {cart.map((item) => {
                 const availableStock = typeof item.variants[0]?.stock === "number" ? Math.max(0, item.variants[0].stock) : MAX_ORDER_QUANTITY;
                 const maximumQuantity = Math.min(MAX_ORDER_QUANTITY, availableStock);
                 return (
                 <article key={item.id} className="cart-item">
-                  <ProductVisual product={item} compact />
-                  <div>
-                    <strong>{item.name[lang]}</strong>
-                    <span>{item.volume} · {price(item.price, lang)}</span>
+                  <div className="cart-item-visual">
+                    <ProductVisual product={item} compact />
+                    <span aria-hidden="true">{item.qty}×</span>
+                  </div>
+                  <div className="cart-item-copy">
+                    <span className="cart-item-brand">{item.brand}</span>
+                    <strong className="cart-item-name">{item.name[lang]}</strong>
+                    <div className="cart-item-meta">
+                      <span>{item.volume}</span>
+                      <span>{lang === "pt" ? "Preço unitário" : "Unit price"}: {price(item.price, lang)}</span>
+                    </div>
                     <div className="cart-line">
                       <div className="qty-control small">
-                        <button aria-label={lang === "pt" ? `Diminuir quantidade de ${item.name[lang]}` : `Decrease quantity of ${item.name[lang]}`} onClick={() => onUpdate(item.id, Math.max(1, item.qty - 1))}><Minus size={13} /></button>
+                        <button type="button" aria-label={lang === "pt" ? `Diminuir quantidade de ${item.name[lang]}` : `Decrease quantity of ${item.name[lang]}`} onClick={() => onUpdate(item.id, Math.max(1, item.qty - 1))}><Minus size={13} /></button>
                         <span>{item.qty}</span>
-                        <button aria-label={lang === "pt" ? `Aumentar quantidade de ${item.name[lang]}` : `Increase quantity of ${item.name[lang]}`} disabled={item.qty >= maximumQuantity} onClick={() => onUpdate(item.id, Math.min(maximumQuantity, item.qty + 1))}><Plus size={13} /></button>
+                        <button type="button" aria-label={lang === "pt" ? `Aumentar quantidade de ${item.name[lang]}` : `Increase quantity of ${item.name[lang]}`} disabled={item.qty >= maximumQuantity} onClick={() => onUpdate(item.id, Math.min(maximumQuantity, item.qty + 1))}><Plus size={13} /></button>
                       </div>
-                      <button className="remove-button" onClick={() => onRemove(item.id)}>{t.remove}</button>
+                      <button type="button" className="remove-button" onClick={() => onRemove(item.id)}><Trash2 size={14} />{t.remove}</button>
+                      <strong className="cart-line-total">{price(item.price * item.qty, lang)}</strong>
                     </div>
                   </div>
                 </article>
                 );
               })}
             </div>
-            <footer>
-              <p><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>
-              <button className="primary-button" onClick={onCheckout}>{t.checkout}</button>
-              <small>{t.mockOnly}</small>
+            <footer className="cart-summary">
+              <div className="cart-summary-heading">
+                <span>{lang === "pt" ? "Resumo da encomenda" : "Order summary"}</span>
+                <small>{itemCountLabel}</small>
+              </div>
+              <p className="cart-subtotal"><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>
+              <p className="cart-summary-note">{lang === "pt" ? "Portes e descontos são calculados no checkout." : "Shipping and discounts are calculated at checkout."}</p>
+              <button type="button" className="primary-button cart-checkout-button" onClick={onCheckout}>
+                <span>{t.checkout}</span>
+                <ChevronRight size={19} />
+              </button>
+              <small className="cart-secure-note"><LockKeyhole size={14} />{t.mockOnly}</small>
             </footer>
           </>
         )}
