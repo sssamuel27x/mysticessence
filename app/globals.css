@@ -2922,6 +2922,16 @@ select {
   box-shadow: 0 0 12px rgba(180, 83, 63, 0.75);
 }
 
+.stock.low span {
+  background: #e3a13d;
+  box-shadow: 0 0 12px rgba(227, 161, 61, 0.7);
+}
+
+.stock.regular span {
+  background: #7eb486;
+  box-shadow: 0 0 12px rgba(126, 180, 134, 0.55);
+}
+
 .spec-row {
   display: flex;
   justify-content: space-between;
@@ -8671,6 +8681,91 @@ select {
 }
 
 @media (max-width: 620px) {
+  .listing-page {
+    padding-top: 24px;
+  }
+
+  .listing-page .listing-hero {
+    min-height: auto;
+    padding-bottom: 18px;
+  }
+
+  .listing-page .listing-hero h1 {
+    margin-top: 14px;
+  }
+
+  .listing-page .listing-hero small {
+    margin-top: 12px;
+  }
+
+  .listing-page .listing-toolbar {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 58px;
+    padding-block: 8px;
+  }
+
+  .listing-page .listing-toolbar > span:empty {
+    display: none;
+  }
+
+  .listing-page .listing-toolbar label {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .listing-page .listing-toolbar select {
+    max-width: 210px;
+  }
+
+  .listing-page .catalog-layout {
+    gap: 22px;
+    padding-top: 20px;
+  }
+
+  .listing-page .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .listing-page .filter-group {
+    min-width: 0;
+    border: 0;
+  }
+
+  .listing-page .filter-group.open {
+    grid-column: 1 / -1;
+  }
+
+  .listing-page .filters button {
+    min-height: 48px;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+
+  .listing-page .filter-options {
+    padding: 8px 10px 12px;
+    border: 1px solid var(--line);
+    border-top: 0;
+  }
+
+  .listing-page .filter-options label {
+    min-height: 34px;
+    font-size: 13px;
+  }
+
+  .listing-page .filters .filter-submit,
+  .listing-page .filters .filter-clear {
+    min-height: 48px;
+    margin-top: 0;
+    font-size: 13px;
+  }
+
   .listing-page .listing-showcase-grid,
   .listing-page .product-grid,
   .listing-page .listing-grid {

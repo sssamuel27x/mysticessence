@@ -53,6 +53,8 @@ test("keeps admin pricing protected and its product editor responsive", async ()
 
   assert.match(page, /applyGlobalDecantPricing\(decantPricingRules\)/);
   assert.match(page, /<DecantStockControls lang=\{lang\}/);
+  assert.match(page, /await logoutFirebase\(\);\s*setCart\(\[\]\);\s*setCartOpen\(false\);/);
+  assert.doesNotMatch(page, /\$\{selectedStock\}.*em stock/);
   const decantStock = await readFile(new URL("../app/decant-stock.tsx", import.meta.url), "utf8");
   assert.match(decantStock, /placeholder=\{pt \? "Ilimitado" : "Unlimited"\}/);
   assert.doesNotMatch(decantStock, /Ainda não configurado/);
@@ -61,6 +63,8 @@ test("keeps admin pricing protected and its product editor responsive", async ()
   assert.match(css, /\.admin-editor-modal\s*\{[^}]*width:\s*min\(1040px,/s);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*repeat\(2,/);
   assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*minmax\(0, 1fr\)/);
+  assert.match(css, /\.listing-page \.filters\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.listing-page \.listing-hero\s*\{[^}]*min-height:\s*auto/);
   assert.match(firestoreRules, /match \/settings\/decants/);
   assert.match(firestoreRules, /match \/settings\/decantStock/);
   assert.match(firestoreRules, /allow create, update: if isAdmin\(\)/);

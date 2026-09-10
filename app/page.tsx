@@ -10,6 +10,7 @@ import { ShippingSettingsProvider, ShippingSettingsDialog, useShippingSettings }
 import { DecantAvailabilityProvider, DecantAvailabilityControls, useDecantAvailability } from "./decant-availability";
 import { DecantStockControls } from "./decant-stock";
 import { primaryBottleStock, updatePrimaryBottleStock } from "./quick-stock.mjs";
+import { isLowStock, stockStatusLabel } from "./stock-status.mjs";
 import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
@@ -1202,6 +1203,10 @@ function Storefront() {
   }, []);
 
   useEffect(() => watchSession((nextSession) => {
+    if (sessionOwner.current && nextSession?.uid !== sessionOwner.current) {
+      setCart([]);
+      setCartOpen(false);
+    }
     sessionOwner.current = nextSession?.uid ?? null;
     setSession(nextSession);
     setAuthReady(true);
@@ -1342,6 +1347,8 @@ function Storefront() {
     navigate("/conta", { view: "account", listing, profileFilter });
     try {
       await logoutFirebase();
+      setCart([]);
+      setCartOpen(false);
     } catch {
       setAuthReady(true);
       setAuthTransition(false);
@@ -2619,7 +2626,7 @@ function ProductDetail({
                 <span>{lang === "pt" ? "Preço" : "Price"}</span>
                 <strong className="detail-price">{selectedDiscount > 0 && <del>{price(selectedVariant.price, lang)}</del>}{price(selectedPrice, lang)}</strong>
               </div>
-              <p className={selectedSoldOut ? "stock sold" : "stock"}><span />{selectedSoldOut ? t.soldout : selectedStock === null ? t.stock : `${selectedStock} ${lang === "pt" ? "em stock" : "in stock"}`}</p>
+              <p className={selectedSoldOut ? "stock sold" : `stock ${isLowStock(selectedStock) ? "low" : "regular"}`}><span />{selectedSoldOut ? t.soldout : stockStatusLabel(selectedStock, lang)}</p>
             </div>
 
             {selectedDiscount > 0 && endsAt && (
