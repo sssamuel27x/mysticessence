@@ -179,6 +179,7 @@ test('shared decant stock is editable and visible only to admin', async () => {
   await denied(setDoc(doc(alice.db, path), data));
   await denied(setDoc(doc(admin.db, path), { quantities: { 2: 50, 5: -1, 10: 40 }, updatedAt: data.updatedAt }));
   await denied(setDoc(doc(admin.db, path), { quantities: { 2: 50, 5: 59 }, updatedAt: data.updatedAt }));
+  await roundtrip(admin, admin, path, { quantities: { 2: null, 5: null, 10: null }, updatedAt: data.updatedAt });
 });
 test('all three shipping zones persist and invalid settings are refused', async () => {
   const { DEFAULT_SHIPPING_SETTINGS } = await import('../functions/shipping.mjs');

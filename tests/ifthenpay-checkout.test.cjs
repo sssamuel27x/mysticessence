@@ -140,6 +140,16 @@ test("full-bottle purchases do not change shared decant stock", async (t) => {
   assert.deepEqual(state.documents.get("settings/decantStock").quantities, { 2: 50, 5: 59, 10: 40 });
 });
 
+test("unlimited sizes accept decant purchases and remain unlimited", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantStock", { quantities: { 2: null, 5: 59, 10: null }, updatedAt: "before" });
+  state.documents.get("products/test-perfume").variants.push({ volume: "2ml", price: 2, isDecant: true, stock: 10 });
+  const request = checkoutRequest("912345678");
+  request.data.items[0].volume = "2ml";
+  await createCheckout.run(request);
+  assert.deepEqual(state.documents.get("settings/decantStock").quantities, { 2: null, 5: 59, 10: null });
+});
+
 test("definitive payment cancellation restores shared decant stock exactly once", async (t) => {
   const state = setup(t);
   state.documents.set("settings/decantStock", { quantities: { 2: 50, 5: 59, 10: 40 }, updatedAt: "before" });

@@ -356,7 +356,7 @@ export async function saveDecantAvailability(sizes: DecantSize[]) {
   } finally { clearTimeout(timer); }
 }
 
-type DecantStock = Record<DecantSize, number>;
+type DecantStock = Record<DecantSize, number | null>;
 
 export function watchDecantStock(callback: (stock: DecantStock | null) => void, onError: (error: Error) => void) {
   if (!database) { onError(new Error("Firebase não está configurado.")); return () => undefined; }

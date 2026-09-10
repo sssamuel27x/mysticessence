@@ -53,6 +53,9 @@ test("keeps admin pricing protected and its product editor responsive", async ()
 
   assert.match(page, /applyGlobalDecantPricing\(decantPricingRules\)/);
   assert.match(page, /<DecantStockControls lang=\{lang\}/);
+  const decantStock = await readFile(new URL("../app/decant-stock.tsx", import.meta.url), "utf8");
+  assert.match(decantStock, /placeholder=\{pt \? "Ilimitado" : "Unlimited"\}/);
+  assert.doesNotMatch(decantStock, /Ainda não configurado/);
   assert.match(page, /saveProductGroup\(nextProduct, nextDecantProduct, editBaseline.current\)/);
   assert.match(page, /A sessão não tem permissão de administrador/);
   assert.match(css, /\.admin-editor-modal\s*\{[^}]*width:\s*min\(1040px,/s);

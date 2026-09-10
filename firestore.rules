@@ -122,15 +122,18 @@ service cloud.firestore {
         && request.resource.data.quantities is map
         && request.resource.data.quantities.keys().hasAll(['2', '5', '10'])
         && request.resource.data.quantities.keys().hasOnly(['2', '5', '10'])
-        && request.resource.data.quantities['2'] is int
-        && request.resource.data.quantities['2'] >= 0
-        && request.resource.data.quantities['2'] <= 1000000
-        && request.resource.data.quantities['5'] is int
-        && request.resource.data.quantities['5'] >= 0
-        && request.resource.data.quantities['5'] <= 1000000
-        && request.resource.data.quantities['10'] is int
-        && request.resource.data.quantities['10'] >= 0
-        && request.resource.data.quantities['10'] <= 1000000;
+        && (request.resource.data.quantities['2'] == null || (
+          request.resource.data.quantities['2'] is int
+          && request.resource.data.quantities['2'] >= 0
+          && request.resource.data.quantities['2'] <= 1000000))
+        && (request.resource.data.quantities['5'] == null || (
+          request.resource.data.quantities['5'] is int
+          && request.resource.data.quantities['5'] >= 0
+          && request.resource.data.quantities['5'] <= 1000000))
+        && (request.resource.data.quantities['10'] == null || (
+          request.resource.data.quantities['10'] is int
+          && request.resource.data.quantities['10'] >= 0
+          && request.resource.data.quantities['10'] <= 1000000));
       allow delete: if false;
     }
 

@@ -13,6 +13,8 @@ test("shared decant stock accepts only complete non-negative whole quantities", 
   assert.deepEqual(normalizeDecantStock({ 2: 50, 5: 59, 10: 40 }), { 2: 50, 5: 59, 10: 40 });
   assert.equal(normalizeDecantStock(null), null);
   assert.equal(isValidDecantStock({ 2: 50, 5: 59, 10: 40 }), true);
+  assert.equal(isValidDecantStock({ 2: null, 5: null, 10: null }), true);
+  assert.equal(isValidDecantStock({ 2: 50, 5: null, 10: 40 }), true);
   assert.equal(isValidDecantStock({ 2: 50, 5: 59 }), false);
   assert.equal(isValidDecantStock({ 2: 50, 5: -1, 10: 40 }), false);
   assert.equal(isValidDecantStock({ 2: 50, 5: 1.5, 10: 40 }), false);
@@ -40,11 +42,19 @@ test("reservation subtracts atomically and refuses insufficient shared stock", (
     () => reserveDecantStock({ 2: 0, 5: 59, 10: 40 }, { 2: 1, 5: 0, 10: 0 }),
     /Insufficient 2ml decant stock/,
   );
+  assert.deepEqual(
+    reserveDecantStock({ 2: null, 5: 59, 10: null }, { 2: 20, 5: 3, 10: 10 }),
+    { 2: null, 5: 56, 10: null },
+  );
 });
 
 test("restoring a cancelled reservation returns each size once", () => {
   assert.deepEqual(
     restoreDecantStock({ 2: 49, 5: 56, 10: 40 }, { 2: 1, 5: 3, 10: 0 }),
     { 2: 50, 5: 59, 10: 40 },
+  );
+  assert.deepEqual(
+    restoreDecantStock({ 2: null, 5: 56, 10: null }, { 2: 20, 5: 3, 10: 10 }),
+    { 2: null, 5: 59, 10: null },
   );
 });

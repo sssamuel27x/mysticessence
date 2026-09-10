@@ -361,7 +361,7 @@ async function createOrderRecord(request, paymentMode) {
     if (sharedDecantStock && hasReservedDecantStock) {
       try { nextSharedDecantStock = reserveDecantStock(sharedDecantStock, reservedDecantStock); }
       catch {
-        const unavailableSize = [2, 5, 10].find((size) => reservedDecantStock[size] > sharedDecantStock[size]);
+        const unavailableSize = [2, 5, 10].find((size) => typeof sharedDecantStock[size] === "number" && reservedDecantStock[size] > sharedDecantStock[size]);
         throw new HttpsError("failed-precondition", unavailableSize
           ? `Já não existem unidades suficientes de decants de ${unavailableSize} ml.`
           : "O stock geral dos decants está indisponível.");

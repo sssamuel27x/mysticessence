@@ -1,7 +1,7 @@
 import { DECANT_SIZES } from "./decant-pricing.mjs";
 
 function validQuantity(value) {
-  return Number.isInteger(value) && value >= 0 && value <= 1000000;
+  return value === null || (Number.isInteger(value) && value >= 0 && value <= 1000000);
 }
 
 export function normalizeDecantStock(value) {
@@ -45,8 +45,12 @@ export function reserveDecantStock(stock, usage) {
   if (!current || !requested) throw new Error("Invalid decant stock");
   const next = {};
   for (const size of DECANT_SIZES) {
-    if (requested[size] > current[size]) throw new Error(`Insufficient ${size}ml decant stock`);
-    next[size] = current[size] - requested[size];
+    if (!Number.isInteger(requested[size])) throw new Error("Invalid decant stock usage");
+    if (current[size] === null) next[size] = null;
+    else {
+      if (requested[size] > current[size]) throw new Error(`Insufficient ${size}ml decant stock`);
+      next[size] = current[size] - requested[size];
+    }
   }
   return next;
 }
@@ -55,5 +59,6 @@ export function restoreDecantStock(stock, usage) {
   const current = normalizeDecantStock(stock);
   const restored = normalizeDecantStock(usage);
   if (!current || !restored) throw new Error("Invalid decant stock");
-  return Object.fromEntries(DECANT_SIZES.map((size) => [size, current[size] + restored[size]]));
+  if (DECANT_SIZES.some((size) => !Number.isInteger(restored[size]))) throw new Error("Invalid decant stock usage");
+  return Object.fromEntries(DECANT_SIZES.map((size) => [size, current[size] === null ? null : current[size] + restored[size]]));
 }

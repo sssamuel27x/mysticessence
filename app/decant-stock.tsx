@@ -5,7 +5,7 @@ import { PackageCheck, Save } from "lucide-react";
 import { DECANT_SIZES, type DecantSize } from "../functions/decant-pricing.mjs";
 import { saveDecantStock, watchDecantStock } from "./firebase";
 
-type DecantStock = Record<DecantSize, number>;
+type DecantStock = Record<DecantSize, number | null>;
 type DraftStock = Record<DecantSize, string>;
 
 const emptyDraft = (): DraftStock => ({ 2: "", 5: "", 10: "" });
@@ -21,7 +21,7 @@ export function DecantStockControls({ lang, disabled = false }: { lang: "pt" | "
 
   useEffect(() => watchDecantStock((next) => {
     setStock(next);
-    setDraft(next ? Object.fromEntries(DECANT_SIZES.map((size) => [size, String(next[size])])) as DraftStock : emptyDraft());
+    setDraft(next ? Object.fromEntries(DECANT_SIZES.map((size) => [size, next[size] === null ? "" : String(next[size])])) as DraftStock : emptyDraft());
     setReady(true);
     setError("");
   }, (failure) => {
@@ -37,9 +37,12 @@ export function DecantStockControls({ lang, disabled = false }: { lang: "pt" | "
   }
 
   async function save() {
-    const next = Object.fromEntries(DECANT_SIZES.map((size) => [size, Number(draft[size])])) as DecantStock;
-    if (DECANT_SIZES.some((size) => draft[size] === "" || !Number.isInteger(next[size]) || next[size] < 0)) {
-      setError(pt ? "Indique uma quantidade inteira para os três tamanhos." : "Enter a whole quantity for all three sizes.");
+    const next = Object.fromEntries(DECANT_SIZES.map((size) => [size, draft[size] === "" ? null : Number(draft[size])])) as DecantStock;
+    if (DECANT_SIZES.some((size) => {
+      const quantity = next[size];
+      return quantity !== null && (!Number.isInteger(quantity) || quantity < 0);
+    })) {
+      setError(pt ? "Use uma quantidade inteira ou deixe o campo vazio para ilimitado." : "Use a whole quantity or leave the field empty for unlimited stock.");
       return;
     }
     setBusy(true);
@@ -68,13 +71,13 @@ export function DecantStockControls({ lang, disabled = false }: { lang: "pt" | "
       <div className="decant-stock-sizes">
         {DECANT_SIZES.map((size) => <label key={size}>
           <span>{size} ml</span>
-          <input type="number" min="0" max="1000000" step="1" inputMode="numeric" value={draft[size]} onChange={(event) => update(size, event.target.value)} placeholder="0" aria-label={pt ? `Stock geral de decants de ${size} ml` : `Shared stock for ${size} ml decants`} />
+          <input type="number" min="0" max="1000000" step="1" inputMode="numeric" value={draft[size]} onChange={(event) => update(size, event.target.value)} placeholder={pt ? "Ilimitado" : "Unlimited"} aria-label={pt ? `Stock geral de decants de ${size} ml` : `Shared stock for ${size} ml decants`} />
           <small>{pt ? "unidades" : "units"}</small>
         </label>)}
       </div>
       <button type="button" className="ghost-button" onClick={() => void save()}><Save size={17} />{busy ? (pt ? "A guardar..." : "Saving...") : (pt ? "Guardar stock na Firebase" : "Save stock to Firebase")}</button>
     </fieldset>
-    {!stock && ready && !error && <p className="decant-stock-note">{pt ? "Ainda não configurado. As vendas continuam sem limite geral até guardar os três valores." : "Not configured yet. Sales remain without a shared limit until all three values are saved."}</p>}
+    {ready && !error && <p className="decant-stock-note">{pt ? "Deixe um campo vazio para manter esse tamanho ilimitado." : "Leave a field empty to keep that size unlimited."}</p>}
     {saved && <p className="decant-stock-success" role="status">{pt ? "Stock geral guardado na Firebase." : "Shared stock saved to Firebase."}</p>}
     {error && <p className="auth-error" role="alert">{error}</p>}
   </section>;
