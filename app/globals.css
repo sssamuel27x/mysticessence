@@ -8086,7 +8086,8 @@ select {
 
   .scent-profile-section > h2 {
     margin-bottom: 24px;
-    font-size: 34px;
+    font-size: 29px;
+    line-height: 1.08;
   }
 
   .scent-profile-band {
@@ -8105,6 +8106,10 @@ select {
   .scent-profile-grid button {
     min-height: 88px;
     padding: 16px 18px;
+  }
+
+  .scent-profile-grid span {
+    color: #f4efe6;
   }
 
   .product-grid,
