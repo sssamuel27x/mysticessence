@@ -147,6 +147,17 @@ function totalsHtml(order) {
   return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discountRows}<div><span>Zona de entrega</span><strong style="float:right;color:#f5efe3">${html(shippingZones[zone].label)}</strong></div>${order.shippingCarrierName ? `<div><span>Transportadora</span><strong style="float:right;color:#f5efe3">${html(order.shippingCarrierName)}</strong></div>${order.shippingDescription ? `<div>${html(order.shippingDescription)}</div>` : ""}` : ""}<div><span>Envio</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
 }
 
+function loyaltyEmailHtml(order, audience) {
+  const points = Math.max(0, Math.trunc(Number(order.loyaltyPointsSpent) || 0));
+  if (!points) return "";
+  const includesGift = order.loyaltyGift === true || points === 750;
+  const title = audience === "owner" ? "Recompensa usada na encomenda" : "Recompensa de pontos confirmada";
+  const giftMessage = audience === "owner"
+    ? "INCLUIR 1 PERFUME SURPRESA DE OFERTA NA ENCOMENDA."
+    : "A sua encomenda inclui 1 perfume surpresa de oferta.";
+  return `<div style="margin-top:22px;padding:18px;border:${includesGift ? "2px" : "1px"} solid #ddb64e;background:${includesGift ? "#271d06" : "#15120b"};color:#f5efe3"><p style="margin:0 0 10px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>${title}</strong></p><p style="margin:0;line-height:1.7"><strong>Pontos utilizados:</strong> ${html(points)}</p>${includesGift ? `<p style="margin:12px 0 0;color:#f8e8b2;line-height:1.6"><strong>${giftMessage}</strong></p>` : ""}</div>`;
+}
+
 function paymentInstructionsHtml(order) {
   const method = text(order.paymentMethod, 30).toLowerCase();
   if (method === "multibanco" && order.paymentEntity && order.paymentReference) {
@@ -1060,8 +1071,9 @@ async function recordLoyaltyPayment(orderId) {
 async function queuePaidOrderEmails(order, orderId) {
   const address = `${html(order.customer.address)}, ${html(order.customer.postal)} ${html(order.customer.city)}`;
   const shippingZone = normalizeShippingZone(order.shippingZone);
-  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(order.discountAmount || 0)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
-  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando a encomenda for enviada.</p>`);
+  const couponDiscountAmount = Number(order.couponDiscountAmount ?? (!order.loyaltyRewardId ? order.discountAmount : 0));
+  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${loyaltyEmailHtml(order, "owner")}${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(couponDiscountAmount)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
+  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${loyaltyEmailHtml(order, "customer")}${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando a encomenda for enviada.</p>`);
 
   await Promise.all([
     queueEmail(ownerEmail.value(), `Nova encomenda paga ${orderId} · Mystic Essence`, ownerBody, `order-${orderId}-owner-paid`),

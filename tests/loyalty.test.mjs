@@ -62,3 +62,11 @@ test("profile and checkout expose simple reward controls", () => {
   assert.match(pageSource, /Pode ser utilizada juntamente com um código promocional/);
   assert.doesNotMatch(pageSource, /Não é acumulável com códigos promocionais/);
 });
+
+test("paid-order emails show redeemed points and the 750-point surprise gift", () => {
+  assert.match(functionsSource, /Pontos utilizados:/);
+  assert.match(functionsSource, /INCLUIR 1 PERFUME SURPRESA DE OFERTA NA ENCOMENDA/);
+  assert.match(functionsSource, /A sua encomenda inclui 1 perfume surpresa de oferta/);
+  assert.match(functionsSource, /loyaltyEmailHtml\(order, "owner"\)/);
+  assert.match(functionsSource, /loyaltyEmailHtml\(order, "customer"\)/);
+});

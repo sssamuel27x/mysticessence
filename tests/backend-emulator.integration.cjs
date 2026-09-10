@@ -106,6 +106,12 @@ test('paid checkout redeems 750 points, adds the surprise gift and earns points 
   assert.equal(profile.loyaltyLifetimePoints, 90);
   assert.equal((await db.doc(`profiles/${loyaltyBuyer.uid}/loyaltyHistory/earn-${result.orderId}`).get()).data().points, 90);
   assert.equal((await db.doc(`profiles/${loyaltyBuyer.uid}/loyaltyHistory/redeem-${result.orderId}`).get()).data().status, 'completed');
+  const customerEmail = (await db.doc(`mail/order-${result.orderId}-paid`).get()).data().message.html;
+  const ownerEmail = (await db.doc(`mail/order-${result.orderId}-owner-paid`).get()).data().message.html;
+  assert.ok(customerEmail.includes('Pontos utilizados:</strong> 750'));
+  assert.ok(customerEmail.includes('inclui 1 perfume surpresa de oferta'));
+  assert.ok(ownerEmail.includes('Pontos utilizados:</strong> 750'));
+  assert.ok(ownerEmail.includes('INCLUIR 1 PERFUME SURPRESA DE OFERTA NA ENCOMENDA'));
 });
 test('checkout rejects forged and insufficient rewards while allowing coupon stacking', async (t) => {
   await seed(); const mock = provider(t);
