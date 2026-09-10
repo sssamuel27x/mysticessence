@@ -8095,7 +8095,7 @@ select {
 
   .scent-profile-grid {
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 9px;
   }
 
   .scent-profile-grid button:last-child {
@@ -8103,7 +8103,8 @@ select {
   }
 
   .scent-profile-grid button {
-    min-height: 112px;
+    min-height: 88px;
+    padding: 16px 18px;
   }
 
   .product-grid,
