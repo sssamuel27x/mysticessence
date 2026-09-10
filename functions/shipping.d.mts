@@ -1,0 +1,11 @@
+export type ShippingZone = 'continental' | 'islands' | 'spain';
+export type ShippingCarrier = { id: string; name: string; price: number; description: string };
+export type ShippingSettings = Record<ShippingZone, { freeFrom: number; carriers: ShippingCarrier[] }>;
+export const SHIPPING_ZONE_IDS: readonly ShippingZone[];
+export const MAX_CARRIERS: number;
+export const DEFAULT_SHIPPING_SETTINGS: ShippingSettings;
+export function isValidShippingSettings(value: unknown): value is ShippingSettings;
+export function normalizeShippingSettings(value: unknown): ShippingSettings | null;
+export function getShippingCarrier(zone: ShippingZone, settings?: ShippingSettings, carrierId?: string): ShippingCarrier | null;
+export function getShippingCost(subtotal: number, zone: ShippingZone, settings?: ShippingSettings, carrierId?: string): number;
+export function shippingSettingsEqual(first: ShippingSettings, second: ShippingSettings): boolean;

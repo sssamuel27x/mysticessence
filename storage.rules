@@ -1,0 +1,25 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null && (
+        !firestore.exists(/databases/(default)/documents/sessionRevocations/$(request.auth.uid)) ||
+        request.auth.token.auth_time > firestore.get(/databases/(default)/documents/sessionRevocations/$(request.auth.uid)).data.revokedAt
+      ) && (
+        ('admin' in request.auth.token && request.auth.token.admin == true) ||
+        request.auth.uid == 'bFGr8AtlSGQTDZ9Nel9BVXB0csC2'
+      );
+    }
+
+    match /products/{productId}/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
