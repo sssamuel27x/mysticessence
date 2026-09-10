@@ -72,8 +72,8 @@ test("keeps admin pricing protected and its product editor responsive", async ()
   assert.match(css, /\.cart-drawer\s*\{[^}]*width:\s*min\(580px, 100vw\)/s);
   assert.match(css, /\.cart-summary\s*\{[^}]*safe-area-inset-bottom/s);
   assert.match(css, /\.scent-profile-grid button\s*\{[^}]*min-height:\s*166px/s);
-  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-grid button\s*\{[^}]*min-height:\s*88px/s);
-  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-section > h2\s*\{[^}]*font-size:\s*29px/s);
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-grid button\s*\{[^}]*min-height:\s*72px/s);
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-section > h2\s*\{[^}]*font-size:\s*24px/s);
   assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-grid span\s*\{[^}]*color:\s*#f4efe6/s);
   assert.match(firestoreRules, /match \/settings\/decants/);
   assert.match(firestoreRules, /match \/settings\/decantStock/);

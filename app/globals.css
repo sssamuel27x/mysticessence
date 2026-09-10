@@ -8086,7 +8086,7 @@ select {
 
   .scent-profile-section > h2 {
     margin-bottom: 24px;
-    font-size: 29px;
+    font-size: 24px;
     line-height: 1.08;
   }
 
@@ -8096,7 +8096,7 @@ select {
 
   .scent-profile-grid {
     grid-template-columns: 1fr;
-    gap: 9px;
+    gap: 8px;
   }
 
   .scent-profile-grid button:last-child {
@@ -8104,8 +8104,8 @@ select {
   }
 
   .scent-profile-grid button {
-    min-height: 88px;
-    padding: 16px 18px;
+    min-height: 72px;
+    padding: 12px 14px;
   }
 
   .scent-profile-grid span {
