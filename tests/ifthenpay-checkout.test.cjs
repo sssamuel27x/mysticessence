@@ -10,6 +10,8 @@ const db = getFirestore();
 function checkoutRequest(phone, paymentMethod = "mbway") {
   return { rawRequest: { ip: '127.0.0.1' }, data: {
     attemptId: require('node:crypto').randomUUID(),
+    termsAccepted: true,
+    termsVersion: "2026-09-10",
     paymentMethod,
     customer: {
       name: "Checkout Test", email: "checkout@example.invalid", phone,
@@ -19,6 +21,19 @@ function checkoutRequest(phone, paymentMethod = "mbway") {
     items: [{ productId: "test-perfume", volume: "100ml", quantity: 2 }],
   } };
 }
+
+test("checkout requires acceptance of the current terms before any side effect", async (t) => {
+  const state = setup(t);
+  const missingAcceptance = checkoutRequest("912345678");
+  delete missingAcceptance.data.termsAccepted;
+  await assert.rejects(createCheckout.run(missingAcceptance), { code: "invalid-argument" });
+  const outdatedVersion = checkoutRequest("912345678");
+  outdatedVersion.data.termsVersion = "2026-09-09";
+  await assert.rejects(createCheckout.run(outdatedVersion), { code: "failed-precondition" });
+  assert.equal(state.collection.mock.callCount(), 0);
+  assert.equal(state.transaction.mock.callCount(), 0);
+  assert.equal(state.fetch.mock.callCount(), 0);
+});
 
 // All persistence and provider calls are replaced; no credentials or network are used.
 function setup(t, providerResponse = { Status: "000", RequestId: "test-request" }) {
@@ -148,6 +163,9 @@ for (const phone of ["912345678", "912 345 678", "+351 912 345 678", "00351 9123
     assert.equal(result.paymentStatus, "pending");
     assert.equal(result.requestId, "test-request");
     assert.equal(state.documents.get(`orders/${result.orderId}`).paymentInitiated, true);
+    assert.equal(state.documents.get(`orders/${result.orderId}`).termsAccepted, true);
+    assert.equal(state.documents.get(`orders/${result.orderId}`).termsVersion, "2026-09-10");
+    assert.match(state.documents.get(`orders/${result.orderId}`).termsAcceptedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(state.documents.get("products/test-perfume").variants[0].stock, 3);
   });
 }

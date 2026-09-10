@@ -6212,6 +6212,11 @@ select {
   opacity: 1;
 }
 
+.drawer-backdrop[hidden],
+.cart-drawer[hidden] {
+  display: none !important;
+}
+
 .cart-drawer {
   position: fixed;
   inset: 0 0 0 auto;

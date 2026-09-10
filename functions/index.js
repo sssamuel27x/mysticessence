@@ -208,6 +208,7 @@ async function createOrderRecord(request, paymentMode) {
   const { DEFAULT_SHIPPING_SETTINGS, normalizeShippingSettings, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
   const { loyaltyDiscountForSubtotal, loyaltyPointsForAmount, loyaltyRewardById, normalizeLoyaltyPoints } = await import("./loyalty.mjs");
   const input = request.data || {};
+  const CHECKOUT_TERMS_VERSION = await validateTermsAcceptance(input);
   const customer = input.customer || {};
   const requestedBilling = input.billing || {};
   const requestedItems = Array.isArray(input.items) ? input.items : [];
@@ -414,6 +415,9 @@ async function createOrderRecord(request, paymentMode) {
       loyaltyDiscountAmount,
       loyaltyGift: loyaltyReward?.gift === true,
       loyaltyPointsToEarn: request.auth ? loyaltyPointsForAmount(subtotal - discountAmount) : 0,
+      termsAccepted: true,
+      termsVersion: CHECKOUT_TERMS_VERSION,
+      termsAcceptedAt: now,
       total,
       payment: paymentMode === "ifthenpay" ? "ifthenpay" : text(input.paymentMethod, 30) || "pending",
       paymentMethod: text(input.paymentMethod, 30) || "gateway",
@@ -449,6 +453,15 @@ async function createOrderRecord(request, paymentMode) {
   const total = order.total;
 
   return { input, orderId: order.existingOrderId || orderId, order, total, replay: Boolean(order.existingOrderId) };
+}
+
+async function validateTermsAcceptance(input) {
+  const { CHECKOUT_TERMS_VERSION } = await import("./legal.mjs");
+  if (input.termsAccepted !== true) throw new HttpsError("invalid-argument", "Aceite os Termos e Condições antes de continuar.");
+  if (text(input.termsVersion, 40) !== CHECKOUT_TERMS_VERSION) {
+    throw new HttpsError("failed-precondition", "Os Termos e Condições foram atualizados. Recarregue a página, leia a nova versão e confirme novamente.");
+  }
+  return CHECKOUT_TERMS_VERSION;
 }
 
 async function restoreReservedInventory(orderId, order, evidence) {
@@ -538,7 +551,7 @@ async function restoreReservedInventory(orderId, order, evidence) {
   });
 }
 
-exports.createPendingOrder = onCall({ region }, async (request) => {
+exports.createPendingOrder = onCall({ region }, async () => {
   throw new HttpsError("failed-precondition", "Os pagamentos não estão disponíveis. Nenhuma encomenda foi criada.");
 });
 
@@ -837,6 +850,7 @@ exports.createCheckout = onCall({
   ...callableOptions,
   secrets: [ifthenpayMbKey, ifthenpayMbwayKey, ifthenpayPayshopKey, ifthenpayCardKey],
 }, async (request) => {
+  await validateTermsAcceptance(request.data || {});
   const paymentMethod = text(request.data?.paymentMethod, 30).toLowerCase();
   if (!['mbway', 'multibanco', 'payshop', 'card'].includes(paymentMethod)) {
     throw new HttpsError("invalid-argument", "Escolha um método de pagamento válido.");

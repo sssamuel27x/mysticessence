@@ -15,6 +15,8 @@ after(async () => { await db.terminate(); await functionsRequire('firebase-admin
 const buyer = { uid: 'backend-audit-buyer', token: { email: 'buyer@example.invalid', name: 'Audit buyer' } };
 const request = () => ({ auth: buyer, rawRequest: { ip: '127.0.0.1' }, data: {
   attemptId: require('node:crypto').randomUUID(),
+  termsAccepted: true,
+  termsVersion: '2026-09-10',
   paymentMethod: 'mbway', customer: { name: '<img src=x onerror=alert(1)>', email: 'buyer@example.invalid', phone: '912345678', address: 'Audit address', postal: '1000-001', city: 'Lisboa' },
   billing: { sameAsContact: true }, items: [{ productId: 'backend-audit', volume: '100ml', quantity: 1 }],
 } });

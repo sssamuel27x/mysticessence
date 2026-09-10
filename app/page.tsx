@@ -2,6 +2,7 @@
 
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { PRODUCT_IMAGE_IDS } from "./product-images";
 import { getProductImages, productImageFields, validateProductImageFiles, MAX_PRODUCT_IMAGES, type ProductImage } from "./product-gallery";
 import { LEGAL_DOCUMENTS, type LegalKind } from "./legal-content";
@@ -15,6 +16,7 @@ import { brandKey, productsForBrand } from "./brand-catalogue";
 import { SHIPPING_ZONE_IDS, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
+import { CHECKOUT_TERMS_VERSION } from "../functions/legal.mjs";
 import {
   createCheckout,
   deleteFavoriteFolder,
@@ -354,6 +356,9 @@ type Order = {
   loyaltyDiscountAmount?: number;
   loyaltyGift?: boolean;
   loyaltyPointsEarned?: number;
+  termsAccepted?: boolean;
+  termsVersion?: string;
+  termsAcceptedAt?: string;
   total: number;
   customerUid?: string | null;
   payment: PaymentMethod | "ifthenpay";
@@ -484,7 +489,7 @@ const COPY = {
       shipping: "Envio",
       free: "Grátis",
       total: "Total",
-      confirm: "Confirmar pedido",
+      confirm: "Pagar e confirmar encomenda",
       secure: "Os seus dados são utilizados para processar e entregar a encomenda.",
       successTitle: "Pedido confirmado",
       successText: "A demonstração do checkout foi concluída. Nenhum pagamento real foi processado.",
@@ -590,7 +595,7 @@ const COPY = {
       shipping: "Shipping",
       free: "Free",
       total: "Total",
-      confirm: "Confirm order",
+      confirm: "Pay and confirm order",
       secure: "Your details are used to process and deliver your order.",
       successTitle: "Order confirmed",
       successText: "The checkout demonstration is complete. No real payment was processed.",
@@ -1589,7 +1594,7 @@ function Storefront() {
         onClose={() => setFavoriteProductId(null)}
         onSaved={(message) => showToast(message)}
       />
-      <a
+      {view !== "checkout" && <a
         className="whatsapp-help"
         href="https://wa.me/351938258798?text=Ol%C3%A1%21%20Preciso%20de%20ajuda."
         target="_blank"
@@ -1598,7 +1603,7 @@ function Storefront() {
       >
         <MessageCircle size={21} />
         <span>Precisa de recomendações?</span>
-      </a>
+      </a>}
       {syncError && <div className="sync-error" role="alert"><span>{syncError}</span><button onClick={() => window.location.reload()}>{lang === "pt" ? "Recarregar" : "Reload"}</button></div>}
       {toast && (
         <div className="toast">
@@ -2656,7 +2661,7 @@ function ProductDetail({
               <form className="restock-alert" onSubmit={requestRestockNotification}>
                 <div><Mail size={19} /><span><strong>{lang === "pt" ? "Avise-me quando voltar" : "Notify me when it returns"}</strong><small>{lang === "pt" ? `Receba um email quando ${selectedVolume} estiver disponível.` : `Receive an email when ${selectedVolume} is available.`}</small></span></div>
                 <label><span className="sr-only">Email</span><input type="email" value={session?.email || ""} readOnly placeholder="email@exemplo.pt" required /></label>
-                {session?.emailVerified ? <button type="submit" disabled={restockBusy}>{restockBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Criar aviso" : "Create alert")}</button> : <a href="/conta">{lang === "pt" ? "Entrar e confirmar email" : "Sign in and verify email"}</a>}
+                {session?.emailVerified ? <button type="submit" disabled={restockBusy}>{restockBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Criar aviso" : "Create alert")}</button> : <Link href="/conta">{lang === "pt" ? "Entrar e confirmar email" : "Sign in and verify email"}</Link>}
                 {restockMessage && <p className="restock-success" role="status"><Check size={14} />{restockMessage}</p>}
                 {restockError && <p className="restock-error" role="alert">{restockError}</p>}
               </form>
@@ -2664,9 +2669,9 @@ function ProductDetail({
 
             <div className="buy-row">
               <div className="qty-control" aria-label={t.qty}>
-                <button onClick={() => setQty((value) => Math.max(1, value - 1))}><Minus size={16} /></button>
+                <button type="button" aria-label={lang === "pt" ? "Diminuir quantidade" : "Decrease quantity"} onClick={() => setQty((value) => Math.max(1, value - 1))}><Minus size={16} /></button>
                 <span>{qty}</span>
-                <button disabled={selectedSoldOut || qty >= maximumQuantity} onClick={() => setQty((value) => Math.min(maximumQuantity, value + 1))}><Plus size={16} /></button>
+                <button type="button" aria-label={lang === "pt" ? "Aumentar quantidade" : "Increase quantity"} disabled={selectedSoldOut || qty >= maximumQuantity} onClick={() => setQty((value) => Math.min(maximumQuantity, value + 1))}><Plus size={16} /></button>
               </div>
               <button className="add-to-cart-signature" disabled={selectedSoldOut} onClick={addSelectedVariant}>
                 <span>{t.add}</span>
@@ -2861,12 +2866,7 @@ function ProductGallery({ product, lang }: { product: Product; lang: Lang }) {
   }
 
   return (
-    <div className="product-gallery" role="group" aria-label={lang === "pt" ? "Imagens do produto" : "Product images"} onKeyDown={(event) => {
-      if (hasMultiple && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-        event.preventDefault();
-        moveImage(event.key === "ArrowLeft" ? -1 : 1);
-      }
-    }}>
+    <div className="product-gallery" role="group" aria-label={lang === "pt" ? "Imagens do produto" : "Product images"}>
       <div className="detail-gallery-frame">
         {selected && !failedUrls.includes(selected.imageUrl) ? <div className="visual product-photo-visual hero-visual"><img
           key={selected.imageUrl}
@@ -3004,7 +3004,7 @@ function AccountPage({
       if (!firebaseEnabled) throw new Error(lang === "pt" ? "A ligação Firebase ainda não está configurada neste ambiente." : "Firebase is not configured in this environment yet.");
       if (mode === "login") await loginWithEmail(email, password);
       else await registerWithEmail(name, email, password);
-    } catch (error) {
+    } catch {
       setAuthError(lang === "pt" ? "Não foi possível entrar. Verifique os dados ou tente novamente mais tarde." : "Could not sign in. Check your details or try again later.");
     } finally {
       setAuthBusy(false);
@@ -4371,6 +4371,7 @@ function CheckoutPage({
   const [couponMessage, setCouponMessage] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
   const [campaignRulesOpen, setCampaignRulesOpen] = useState(false);
+  const campaignRulesCloseRef = useRef<HTMLButtonElement>(null);
   const [shippingZone, setShippingZone] = useState<ShippingZone>("continental");
   const [postalCode, setPostalCode] = useState("");
   const { settings: shippingSettings, ready: shippingReady, error: shippingError, previewChanged } = useShippingSettings();
@@ -4391,12 +4392,14 @@ function CheckoutPage({
 
   useEffect(() => {
     if (!campaignRulesOpen) return;
+    const focusFrame = window.requestAnimationFrame(() => campaignRulesCloseRef.current?.focus());
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setCampaignRulesOpen(false);
     };
     document.body.classList.add("loyalty-rules-lock");
     window.addEventListener("keydown", closeOnEscape);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.body.classList.remove("loyalty-rules-lock");
       window.removeEventListener("keydown", closeOnEscape);
     };
@@ -4443,6 +4446,11 @@ function CheckoutPage({
     const deliveryAddress = String(form.get("address") ?? "").trim();
     const deliveryPostal = String(form.get("postal") ?? "").trim();
     const deliveryCity = String(form.get("city") ?? "").trim();
+    const termsAccepted = form.get("termsAccepted") === "accepted";
+    if (!termsAccepted) {
+      setCheckoutError(lang === "pt" ? "Aceite os Termos e Condições antes de continuar." : "Accept the Terms and Conditions before continuing.");
+      return;
+    }
     const order: Order = {
       id: `ME-${createdAt.replace(/\D/g, "").slice(-8)}`,
       createdAt,
@@ -4484,6 +4492,8 @@ function CheckoutPage({
       loyaltyPointsSpent: selectedReward?.points,
       loyaltyDiscountAmount,
       loyaltyGift: selectedReward?.gift === true,
+      termsAccepted,
+      termsVersion: CHECKOUT_TERMS_VERSION,
       total,
       payment,
       status: "received",
@@ -4503,6 +4513,8 @@ function CheckoutPage({
           expectedShipping: shipping,
           couponCode: appliedCoupon?.code,
           loyaltyRewardId: selectedReward?.id,
+          termsAccepted,
+          termsVersion: CHECKOUT_TERMS_VERSION,
           items: cart.map((item) => ({ productId: item.id, volume: item.volume, quantity: item.qty })),
         };
         const result = await createCheckout(payload);
@@ -4734,7 +4746,7 @@ function CheckoutPage({
             <p className="summary-total"><span>{copy.total}</span><strong>{price(total, lang)}</strong></p>
           </div>
           <label className="checkout-legal-acceptance">
-            <input type="checkbox" required />
+            <input type="checkbox" name="termsAccepted" value="accepted" required />
             <strong>
               {lang === "pt" ? "Li e aceito os " : "I have read and accept the "}
               <a href={LEGAL_PATHS.terms} target="_blank" rel="noreferrer">{lang === "pt" ? "Termos e Condições" : "Terms and Conditions"}</a>
@@ -4760,7 +4772,7 @@ function CheckoutPage({
         <section className="loyalty-rules-dialog" role="dialog" aria-modal="true" aria-labelledby="loyalty-rules-title">
           <header>
             <h2 id="loyalty-rules-title">{lang === "pt" ? "Regras do programa de pontos" : "Points programme rules"}</h2>
-            <button type="button" autoFocus onClick={() => setCampaignRulesOpen(false)} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={20} /></button>
+            <button ref={campaignRulesCloseRef} type="button" onClick={() => setCampaignRulesOpen(false)} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={20} /></button>
           </header>
           <div className="loyalty-rules-image">
             <Image
@@ -4799,11 +4811,11 @@ function CartDrawer({
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   return (
     <>
-      <button className={`drawer-backdrop ${open ? "visible" : ""}`} onClick={onClose} aria-label="Close cart backdrop" />
-      <aside className={`cart-drawer ${open ? "open" : ""}`} aria-hidden={!open}>
+      <button className={`drawer-backdrop ${open ? "visible" : ""}`} hidden={!open} onClick={onClose} aria-label={lang === "pt" ? "Fechar carrinho" : "Close cart"} />
+      <aside className={`cart-drawer ${open ? "open" : ""}`} hidden={!open} aria-hidden={!open}>
         <header>
           <h2>{t.cart}</h2>
-          <button onClick={onClose} aria-label="Close cart"><X size={22} /></button>
+          <button onClick={onClose} aria-label={lang === "pt" ? "Fechar carrinho" : "Close cart"}><X size={22} /></button>
         </header>
         {cart.length === 0 ? (
           <div className="empty-cart">
@@ -4825,9 +4837,9 @@ function CartDrawer({
                     <span>{item.volume} · {price(item.price, lang)}</span>
                     <div className="cart-line">
                       <div className="qty-control small">
-                        <button onClick={() => onUpdate(item.id, Math.max(1, item.qty - 1))}><Minus size={13} /></button>
+                        <button aria-label={lang === "pt" ? `Diminuir quantidade de ${item.name[lang]}` : `Decrease quantity of ${item.name[lang]}`} onClick={() => onUpdate(item.id, Math.max(1, item.qty - 1))}><Minus size={13} /></button>
                         <span>{item.qty}</span>
-                        <button disabled={item.qty >= maximumQuantity} onClick={() => onUpdate(item.id, Math.min(maximumQuantity, item.qty + 1))}><Plus size={13} /></button>
+                        <button aria-label={lang === "pt" ? `Aumentar quantidade de ${item.name[lang]}` : `Increase quantity of ${item.name[lang]}`} disabled={item.qty >= maximumQuantity} onClick={() => onUpdate(item.id, Math.min(maximumQuantity, item.qty + 1))}><Plus size={13} /></button>
                       </div>
                       <button className="remove-button" onClick={() => onRemove(item.id)}>{t.remove}</button>
                     </div>

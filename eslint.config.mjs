@@ -13,6 +13,9 @@ const eslintConfig = defineConfig([
     "dist/**",
     "out/**",
     "build/**",
+    "netlify-dist/**",
+    ".vinext/**",
+    ".wrangler/**",
     "next-env.d.ts",
   ]),
   eslint.configs.recommended,
@@ -34,6 +37,16 @@ const eslintConfig = defineConfig([
       react: {
         version: "detect",
       },
+    },
+    rules: {
+      // These effects synchronize Firebase/local preview state with React state.
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    files: ["functions/**/*.js", "functions/**/*.cjs", "tests/**/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
 ]);

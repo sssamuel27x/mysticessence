@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /checkout
+Disallow: /conta
+
+Sitemap: https://mysticessence.pt/sitemap.xml
