@@ -9,6 +9,7 @@ const { trackingDetails } = require("./tracking.cjs");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { HttpsError, onCall: firebaseOnCall, onRequest } = require("firebase-functions/v2/https");
 const { normalizeBlockedDecantSizes, variantUnavailable } = require("./decant-availability.mjs");
+const { decantStockUsage, normalizeDecantStock, reserveDecantStock, restoreDecantStock } = require("./decant-stock.mjs");
 
 initializeApp();
 const db = getFirestore();
@@ -257,6 +258,13 @@ async function createOrderRecord(request, paymentMode) {
     }
     const availabilitySnapshot = await transaction.get(db.collection("settings").doc("decantAvailability"));
     const blockedSizes = normalizeBlockedDecantSizes(availabilitySnapshot.data()?.blockedSizes);
+    const decantStockRef = db.collection("settings").doc("decantStock");
+    const decantStockSnapshot = await transaction.get(decantStockRef);
+    let sharedDecantStock = null;
+    if (decantStockSnapshot.exists) {
+      try { sharedDecantStock = normalizeDecantStock(decantStockSnapshot.data().quantities); }
+      catch { throw new HttpsError("failed-precondition", "O stock geral dos decants está inválido. Contacte a loja."); }
+    }
     const shippingSnapshot = await transaction.get(db.collection("settings").doc("shipping"));
     const shippingSettings = shippingSnapshot.exists ? normalizeShippingSettings(shippingSnapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS;
     if (!shippingSettings) {
@@ -319,6 +327,7 @@ async function createOrderRecord(request, paymentMode) {
         name: product.name,
         brand: product.brand,
         volume: requested.volume,
+        isDecant: Boolean(variant.isDecant),
         qty: requested.quantity,
         price: unitPrice,
         lineTotal: Math.round(unitPrice * requested.quantity * 100) / 100,
@@ -346,6 +355,21 @@ async function createOrderRecord(request, paymentMode) {
       loyaltyDiscountAmount = loyaltyDiscountForSubtotal(loyaltyReward, subtotal);
     }
 
+    const reservedDecantStock = decantStockUsage(items);
+    const hasReservedDecantStock = Object.values(reservedDecantStock).some((quantity) => quantity > 0);
+    let nextSharedDecantStock = null;
+    if (sharedDecantStock && hasReservedDecantStock) {
+      try { nextSharedDecantStock = reserveDecantStock(sharedDecantStock, reservedDecantStock); }
+      catch {
+        const unavailableSize = [2, 5, 10].find((size) => reservedDecantStock[size] > sharedDecantStock[size]);
+        throw new HttpsError("failed-precondition", unavailableSize
+          ? `Já não existem unidades suficientes de decants de ${unavailableSize} ml.`
+          : "O stock geral dos decants está indisponível.");
+      }
+    }
+
+    const now = new Date().toISOString();
+
     productIds.forEach((productId, index) => {
       const product = products.get(productId);
       const variants = (product.variants || []).map((variant) => {
@@ -354,7 +378,7 @@ async function createOrderRecord(request, paymentMode) {
         const stock = Math.max(0, Math.trunc(variant.stock) - requestedQuantity);
         return { ...variant, stock };
       });
-      transaction.update(productRefs[index], { variants, updatedAt: new Date().toISOString() });
+      transaction.update(productRefs[index], { variants, updatedAt: now });
 
       const decantSnapshot = decantSnapshots[index];
       if (decantSnapshot?.exists) {
@@ -364,15 +388,18 @@ async function createOrderRecord(request, paymentMode) {
           variants: decantVariants,
           tag: decantVariants.length && decantVariants.every((variant) => variant.soldout || variant.stock === 0) ? "soldout" : "stock",
           ...(firstAvailable ? { price: firstAvailable.price, volume: firstAvailable.volume } : {}),
-          updatedAt: new Date().toISOString(),
+          updatedAt: now,
         });
       }
     });
 
+    if (nextSharedDecantStock) {
+      transaction.update(decantStockRef, { quantities: nextSharedDecantStock, updatedAt: now });
+    }
+
     const couponDiscountAmount = Math.round(subtotal * couponDiscount) / 100;
     const discountAmount = Math.round(Math.min(subtotal, couponDiscountAmount + loyaltyDiscountAmount) * 100) / 100;
     const total = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
-    const now = new Date().toISOString();
     const orderItems = loyaltyReward?.gift ? [...items, {
       id: "loyalty-surprise-perfume",
       productId: null,
@@ -415,6 +442,8 @@ async function createOrderRecord(request, paymentMode) {
       loyaltyDiscountAmount,
       loyaltyGift: loyaltyReward?.gift === true,
       loyaltyPointsToEarn: request.auth ? loyaltyPointsForAmount(subtotal - discountAmount) : 0,
+      decantStockReserved: nextSharedDecantStock ? reservedDecantStock : null,
+      decantStockReservationVersion: nextSharedDecantStock ? 1 : null,
       termsAccepted: true,
       termsVersion: CHECKOUT_TERMS_VERSION,
       termsAcceptedAt: now,
@@ -475,6 +504,11 @@ async function restoreReservedInventory(orderId, order, evidence) {
     const variants = requestedByProduct.get(productId);
     variants.set(item.volume, (variants.get(item.volume) || 0) + Math.max(1, Math.trunc(Number(item.qty) || 1)));
   });
+  let reservedDecantStock = null;
+  try { reservedDecantStock = normalizeDecantStock(order.decantStockReserved); }
+  catch { reservedDecantStock = null; }
+  const hasReservedDecantStock = Boolean(reservedDecantStock && Object.values(reservedDecantStock).some((quantity) => quantity > 0));
+  const decantStockRef = hasReservedDecantStock ? db.collection("settings").doc("decantStock") : null;
 
   await db.runTransaction(async (transaction) => {
     const orderRef = db.collection("orders").doc(orderId);
@@ -496,15 +530,17 @@ async function restoreReservedInventory(orderId, order, evidence) {
       entry.productRef,
       entry.decantRef,
     ]);
-    const allSnapshots = await Promise.all([...inventoryRefs, ...(
+    const loyaltyRefs = (
       loyaltyProfileRef && loyaltyRedemptionRef && loyaltyReleaseRef
         ? [loyaltyProfileRef, loyaltyRedemptionRef, loyaltyReleaseRef]
         : []
-    )].map((ref) => transaction.get(ref)));
+    );
+    const allSnapshots = await Promise.all([...inventoryRefs, ...loyaltyRefs, ...(decantStockRef ? [decantStockRef] : [])].map((ref) => transaction.get(ref)));
     const inventorySnapshots = allSnapshots.slice(0, inventoryRefs.length);
     const loyaltyProfileSnapshot = loyaltyProfileRef ? allSnapshots[inventoryRefs.length] : null;
     const loyaltyRedemptionSnapshot = loyaltyRedemptionRef ? allSnapshots[inventoryRefs.length + 1] : null;
     const loyaltyReleaseSnapshot = loyaltyReleaseRef ? allSnapshots[inventoryRefs.length + 2] : null;
+    const decantStockSnapshot = decantStockRef ? allSnapshots[inventoryRefs.length + loyaltyRefs.length] : null;
 
     productsToRestore.forEach(({ requestedVariants, productRef, decantRef }, index) => {
       const productSnapshot = inventorySnapshots[index * 2];
@@ -531,6 +567,16 @@ async function restoreReservedInventory(orderId, order, evidence) {
       }
     });
 
+    if (decantStockRef && decantStockSnapshot?.exists && reservedDecantStock) {
+      let currentDecantStock;
+      try { currentDecantStock = normalizeDecantStock(decantStockSnapshot.data().quantities); }
+      catch { throw new HttpsError("failed-precondition", "O stock geral dos decants está inválido. Contacte a loja."); }
+      transaction.update(decantStockRef, {
+        quantities: restoreDecantStock(currentDecantStock, reservedDecantStock),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
     if (loyaltyProfileRef && loyaltyRedemptionRef && loyaltyReleaseRef && !loyaltyReleaseSnapshot?.exists) {
       const currentPoints = Math.max(0, Math.trunc(Number(loyaltyProfileSnapshot?.data()?.loyaltyPoints) || 0));
       const now = new Date().toISOString();
@@ -547,7 +593,15 @@ async function restoreReservedInventory(orderId, order, evidence) {
       });
     }
 
-    transaction.update(orderRef, { inventoryRestoredAt: new Date().toISOString(), paymentStatus: "failed", reconciliationEvidence: evidence, reconciliationRequired: false, nextReconcileAt: FieldValue.delete() });
+    const restoredAt = new Date().toISOString();
+    transaction.update(orderRef, {
+      inventoryRestoredAt: restoredAt,
+      ...(hasReservedDecantStock ? { decantStockRestoredAt: restoredAt } : {}),
+      paymentStatus: "failed",
+      reconciliationEvidence: evidence,
+      reconciliationRequired: false,
+      nextReconcileAt: FieldValue.delete(),
+    });
   });
 }
 

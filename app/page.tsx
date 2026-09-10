@@ -8,6 +8,7 @@ import { getProductImages, productImageFields, validateProductImageFiles, MAX_PR
 import { LEGAL_DOCUMENTS, type LegalKind } from "./legal-content";
 import { ShippingSettingsProvider, ShippingSettingsDialog, useShippingSettings } from "./shipping-settings";
 import { DecantAvailabilityProvider, DecantAvailabilityControls, useDecantAvailability } from "./decant-availability";
+import { DecantStockControls } from "./decant-stock";
 import { primaryBottleStock, updatePrimaryBottleStock } from "./quick-stock.mjs";
 import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
@@ -276,6 +277,7 @@ type OrderItem = {
   volume: string;
   price: number;
   qty: number;
+  isDecant?: boolean;
   imageUrl?: string;
 };
 type ProductReview = {
@@ -3818,7 +3820,7 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Preços dos decants" : "Decant prices"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Adicionar pontos" : "Add points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Adicionar pontos" : "Add points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <RevokeSessionsButton lang={lang} disabled={adminBusy} />
@@ -3827,9 +3829,10 @@ function AdminPage({
       {decantPricingOpen && <>
         <button className="modal-backdrop" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel} />
         <form className="decant-pricing-manager" onSubmit={applyGlobalDecantRules} role="dialog" aria-modal="true" aria-labelledby="decant-pricing-title">
-          <header><div><SlidersHorizontal size={20} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="decant-pricing-title">{lang === "pt" ? "Preços gerais dos decants" : "Global decant prices"}</h2></div></div><button type="button" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel}><X size={20} /></button></header>
+          <header><div><SlidersHorizontal size={20} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="decant-pricing-title">{lang === "pt" ? "Gestão de decants" : "Decant management"}</h2></div></div><button type="button" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel}><X size={20} /></button></header>
+          <DecantStockControls lang={lang} disabled={adminBusy} />
           <DecantAvailabilityControls lang={lang} disabled={adminBusy} />
-          <p>{lang === "pt" ? "Cada regra aplica um preço de decant aos perfumes cujo preço do frasco esteja dentro do intervalo." : "Each rule applies a decant price to bottles whose price is within the range."}</p>
+          <p><strong>{lang === "pt" ? "Preços gerais" : "Global prices"}</strong><br />{lang === "pt" ? "Cada regra aplica um preço de decant aos perfumes cujo preço do frasco esteja dentro do intervalo." : "Each rule applies a decant price to bottles whose price is within the range."}</p>
           <div className="decant-pricing-list">
             {decantPricingRules.map((rule) => <div className="decant-pricing-row" key={rule.id}>
               <label><span>{lang === "pt" ? "Preço mínimo" : "Minimum"}</span><input type="number" min="0" step="0.01" value={rule.minPrice} onChange={(event) => setDecantPricingRules((rules) => rules.map((item) => item.id === rule.id ? { ...item, minPrice: Number(event.target.value) } : item))} /></label>

@@ -11,7 +11,7 @@ const pagePath = resolve(root, "app/page.tsx");
 const source = readFileSync(pagePath, "utf8");
 const ast = ts.createSourceFile(pagePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const firebaseImport = ast.statements.find((node) => ts.isImportDeclaration(node) && node.moduleSpecifier.text === "./firebase");
-const firebaseExports = [...new Set([...firebaseImport.importClause.namedBindings.elements.filter((node) => !node.isTypeOnly).map((node) => node.propertyName?.text ?? node.name.text), 'watchShippingSettings', 'saveShippingSettings', 'watchBrands', 'saveBrand', 'watchDecantAvailability', 'saveDecantAvailability'])];
+const firebaseExports = [...new Set([...firebaseImport.importClause.namedBindings.elements.filter((node) => !node.isTypeOnly).map((node) => node.propertyName?.text ?? node.name.text), 'watchShippingSettings', 'saveShippingSettings', 'watchBrands', 'saveBrand', 'watchDecantAvailability', 'saveDecantAvailability', 'watchDecantStock', 'saveDecantStock'])];
 const mocks = firebaseExports.map((name) => `export const ${name} = ${name === "storageEnabled" ? "true" : name.endsWith("Enabled") ? "false" : name === "uploadProductImage"
   ? "async (_id, file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve({imageUrl:reader.result}); reader.onerror = reject; reader.readAsDataURL(file); })"
   : "() => { throw new Error('Firebase is disabled in the isolated preview'); }"};`).join("\n");

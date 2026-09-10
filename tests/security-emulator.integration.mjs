@@ -169,6 +169,17 @@ for (const [path, data] of [
     await denied(setDoc(doc(alice.db, path), data));
   });
 }
+test('shared decant stock is editable and visible only to admin', async () => {
+  const path = 'settings/decantStock';
+  const data = { quantities: { 2: 50, 5: 59, 10: 40 }, updatedAt: '2026-09-10T12:00:00.000Z' };
+  await roundtrip(admin, admin, path, data);
+  await denied(getDocFromServer(doc(guest.db, path)));
+  await denied(getDocFromServer(doc(alice.db, path)));
+  await denied(setDoc(doc(guest.db, path), data));
+  await denied(setDoc(doc(alice.db, path), data));
+  await denied(setDoc(doc(admin.db, path), { quantities: { 2: 50, 5: -1, 10: 40 }, updatedAt: data.updatedAt }));
+  await denied(setDoc(doc(admin.db, path), { quantities: { 2: 50, 5: 59 }, updatedAt: data.updatedAt }));
+});
 test('all three shipping zones persist and invalid settings are refused', async () => {
   const { DEFAULT_SHIPPING_SETTINGS } = await import('../functions/shipping.mjs');
   await roundtrip(admin, guest, 'settings/shipping', { zones: DEFAULT_SHIPPING_SETTINGS });

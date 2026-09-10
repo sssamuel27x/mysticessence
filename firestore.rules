@@ -112,6 +112,28 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /settings/decantStock {
+      // Quantidades exatas são privadas e só aparecem no painel de administração.
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasAll(['quantities', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['quantities', 'updatedAt'])
+        && request.resource.data.updatedAt is string
+        && request.resource.data.quantities is map
+        && request.resource.data.quantities.keys().hasAll(['2', '5', '10'])
+        && request.resource.data.quantities.keys().hasOnly(['2', '5', '10'])
+        && request.resource.data.quantities['2'] is int
+        && request.resource.data.quantities['2'] >= 0
+        && request.resource.data.quantities['2'] <= 1000000
+        && request.resource.data.quantities['5'] is int
+        && request.resource.data.quantities['5'] >= 0
+        && request.resource.data.quantities['5'] <= 1000000
+        && request.resource.data.quantities['10'] is int
+        && request.resource.data.quantities['10'] >= 0
+        && request.resource.data.quantities['10'] <= 1000000;
+      allow delete: if false;
+    }
+
     match /brands/{brandId} {
       allow read: if true;
       allow create, update: if isAdmin()

@@ -52,12 +52,14 @@ test("keeps admin pricing protected and its product editor responsive", async ()
   ]);
 
   assert.match(page, /applyGlobalDecantPricing\(decantPricingRules\)/);
+  assert.match(page, /<DecantStockControls lang=\{lang\}/);
   assert.match(page, /saveProductGroup\(nextProduct, nextDecantProduct, editBaseline.current\)/);
   assert.match(page, /A sessão não tem permissão de administrador/);
   assert.match(css, /\.admin-editor-modal\s*\{[^}]*width:\s*min\(1040px,/s);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*repeat\(2,/);
   assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*minmax\(0, 1fr\)/);
   assert.match(firestoreRules, /match \/settings\/decants/);
+  assert.match(firestoreRules, /match \/settings\/decantStock/);
   assert.match(firestoreRules, /allow create, update: if isAdmin\(\)/);
   assert.match(storageRules, /allow write: if isAdmin\(\)/);
 });

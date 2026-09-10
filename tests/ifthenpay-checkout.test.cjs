@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { createRequire } = require("node:module");
 const functionsRequire = createRequire(require.resolve("../functions/index.js"));
-const { createCheckout, createPendingOrder, setInfluencerAccount } = require("../functions/index.js");
+const { createCheckout, createPendingOrder, releaseCancelledPayment, setInfluencerAccount } = require("../functions/index.js");
 const { getFirestore } = functionsRequire("firebase-admin/firestore");
 const { HttpsError } = functionsRequire("firebase-functions/v2/https");
 const db = getFirestore();
@@ -106,6 +106,56 @@ test("releasing a block permits decants but does not override individual stock",
   await createCheckout.run(request);
   assert.equal(state.fetch.mock.callCount(), 1);
   assert.equal(state.documents.get("products/test-perfume").variants[1].stock, 8);
+});
+
+test("shared stock is decremented by size across all decant perfumes", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantStock", { quantities: { 2: 50, 5: 59, 10: 40 }, updatedAt: "before" });
+  state.documents.get("products/test-perfume").variants.push({ volume: "2ml", price: 2, isDecant: true, stock: 10 });
+  const request = checkoutRequest("912345678");
+  request.data.items[0].volume = "2ml";
+  const result = await createCheckout.run(request);
+  assert.deepEqual(state.documents.get("settings/decantStock").quantities, { 2: 48, 5: 59, 10: 40 });
+  assert.equal(state.documents.get("products/test-perfume").variants[1].stock, 8);
+  assert.deepEqual(state.documents.get(`orders/${result.orderId}`).decantStockReserved, { 2: 2, 5: 0, 10: 0 });
+});
+
+test("insufficient shared decant stock rejects checkout before any reservation or payment", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantStock", { quantities: { 2: 1, 5: 59, 10: 40 }, updatedAt: "before" });
+  state.documents.get("products/test-perfume").variants.push({ volume: "2ml", price: 2, isDecant: true, stock: 10 });
+  const request = checkoutRequest("912345678");
+  request.data.items[0].volume = "2ml";
+  await assert.rejects(createCheckout.run(request), { code: "failed-precondition" });
+  assert.deepEqual(state.documents.get("settings/decantStock").quantities, { 2: 1, 5: 59, 10: 40 });
+  assert.equal(state.documents.get("products/test-perfume").variants[1].stock, 10);
+  assert.equal(state.fetch.mock.callCount(), 0);
+  assert.equal([...state.documents.keys()].some((key) => key.startsWith("orders/")), false);
+});
+
+test("full-bottle purchases do not change shared decant stock", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantStock", { quantities: { 2: 50, 5: 59, 10: 40 }, updatedAt: "before" });
+  await createCheckout.run(checkoutRequest("912345678"));
+  assert.deepEqual(state.documents.get("settings/decantStock").quantities, { 2: 50, 5: 59, 10: 40 });
+});
+
+test("definitive payment cancellation restores shared decant stock exactly once", async (t) => {
+  const state = setup(t);
+  state.documents.set("settings/decantStock", { quantities: { 2: 50, 5: 59, 10: 40 }, updatedAt: "before" });
+  state.documents.get("products/test-perfume").variants.push({ volume: "2ml", price: 2, isDecant: true, stock: 10 });
+  const request = checkoutRequest("912345678");
+  request.data.items[0].volume = "2ml";
+  const result = await createCheckout.run(request);
+  const releaseRequest = {
+    auth: { uid: "test-admin", token: { admin: true } },
+    data: { orderId: result.orderId, evidence: "Provider cancellation reference 123", providerCancellationConfirmed: true },
+  };
+  await releaseCancelledPayment.run(releaseRequest);
+  await releaseCancelledPayment.run(releaseRequest);
+  assert.deepEqual(state.documents.get("settings/decantStock").quantities, { 2: 50, 5: 59, 10: 40 });
+  assert.equal(state.documents.get("products/test-perfume").variants[1].stock, 10);
+  assert.match(state.documents.get(`orders/${result.orderId}`).decantStockRestoredAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test("admin can associate an existing account with one exclusive influencer coupon", async (t) => {

@@ -35,6 +35,7 @@ import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSe
 import { brandKey } from "./brand-catalogue";
 import { DEFAULT_DECANT_PRICING, isValidDecantPricing, normalizeDecantPricing, type DecantPricingRule } from "../functions/decant-pricing.mjs";
 import { normalizeBlockedDecantSizes } from "../functions/decant-availability.mjs";
+import { isValidDecantStock, normalizeDecantStock } from "../functions/decant-stock.mjs";
 import type { DecantSize } from "../functions/decant-pricing.mjs";
 
 type PublicEnv = Record<string, string | undefined>;
@@ -353,6 +354,31 @@ export async function saveDecantAvailability(sizes: DecantSize[]) {
       }),
     ]);
   } finally { clearTimeout(timer); }
+}
+
+type DecantStock = Record<DecantSize, number>;
+
+export function watchDecantStock(callback: (stock: DecantStock | null) => void, onError: (error: Error) => void) {
+  if (!database) { onError(new Error("Firebase não está configurado.")); return () => undefined; }
+  return onSnapshot(doc(database, "settings", "decantStock"), { includeMetadataChanges: true }, (snapshot) => {
+    if (snapshot.metadata.hasPendingWrites) return;
+    try { callback(snapshot.exists() ? normalizeDecantStock(snapshot.data().quantities) as DecantStock : null); }
+    catch { onError(new Error("O stock geral dos decants é inválido.")); }
+  }, onError);
+}
+
+export async function saveDecantStock(stock: DecantStock, expected: DecantStock | null) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  if (!isValidDecantStock(stock)) throw new Error("Quantidades de decants inválidas.");
+  await runTransaction(database, async (transaction) => {
+    const reference = doc(database!, "settings", "decantStock");
+    const snapshot = await transaction.get(reference);
+    const current = snapshot.exists() ? normalizeDecantStock(snapshot.data().quantities) as DecantStock : null;
+    if (JSON.stringify(current) !== JSON.stringify(expected)) {
+      throw new Error("O stock mudou entretanto. Os valores atuais foram recarregados; confirme antes de guardar novamente.");
+    }
+    transaction.set(reference, { quantities: stock, updatedAt: new Date().toISOString() });
+  });
 }
 
 export function watchBrands(callback: (names: string[]) => void, onError: (error: Error) => void) {
