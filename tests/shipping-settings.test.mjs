@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, getShippingCost, getShippingCarrier, shippingSettingsEqual } from '../functions/shipping.mjs';
+import { DEFAULT_SHIPPING_SETTINGS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, isValidShippingSettings, normalizeShippingSettings, getShippingCost, getShippingCarrier, shippingSettingsEqual } from '../functions/shipping.mjs';
 
 const settings = () => structuredClone(DEFAULT_SHIPPING_SETTINGS);
 
@@ -22,6 +22,15 @@ test('carrier choice determines shipping price and an empty zone is unavailable,
   next.islands.carriers = [];
   assert.ok(isValidShippingSettings(next));
   assert.throws(() => getShippingCost(200, 'islands', next), /unavailable/);
+});
+
+test('store pickup is always available and free without altering configured carriers', () => {
+  const next = settings();
+  const originalCarrierCount = next.continental.carriers.length;
+  assert.deepEqual(getShippingCarrier('continental', next, STORE_PICKUP_CARRIER_ID), STORE_PICKUP_CARRIER);
+  assert.equal(getShippingCost(20, 'continental', next, STORE_PICKUP_CARRIER_ID), 0);
+  assert.equal(getShippingCost(120, 'islands', next, STORE_PICKUP_CARRIER_ID), 0);
+  assert.equal(next.continental.carriers.length, originalCarrierCount);
 });
 
 test('rejects malformed settings, duplicate carriers and invalid money', () => {

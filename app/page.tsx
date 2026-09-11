@@ -15,7 +15,7 @@ import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
-import { SHIPPING_ZONE_IDS, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
+import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
 import { CHECKOUT_TERMS_VERSION } from "../functions/legal.mjs";
@@ -104,6 +104,7 @@ import {
   Sparkles,
   SlidersHorizontal,
   Star,
+  Store,
   Tag,
   TicketPercent,
   Phone,
@@ -380,6 +381,7 @@ type Order = {
   subtotal: number;
   shipping: number;
   shippingZone?: ShippingZone;
+  deliveryMethod?: "shipping" | "store_pickup" | "digital";
   shippingCarrierId?: string;
   shippingCarrierName?: string;
   shippingDescription?: string;
@@ -438,6 +440,19 @@ function paymentMethodLabel(method?: string) {
   if (method === "payshop") return "Payshop";
   if (method === "card") return "Cartão";
   return method || "Pendente";
+}
+
+function isStorePickupOrder(order: Pick<Order, "deliveryMethod" | "shippingCarrierId">) {
+  return order.deliveryMethod === "store_pickup" || order.shippingCarrierId === STORE_PICKUP_CARRIER_ID;
+}
+
+function orderStatusLabel(order: Order, status: OrderStatus, lang: Lang) {
+  if (!isStorePickupOrder(order)) return ORDER_STATUS_LABELS[lang][status];
+  const pickupLabels: Record<Lang, Record<OrderStatus, string>> = {
+    pt: { received: "Encomenda recebida", preparing: "Em preparação", shipped: "Pronta para levantamento", delivered: "Levantada" },
+    en: { received: "Order received", preparing: "Preparing", shipped: "Ready for pickup", delivered: "Collected" },
+  };
+  return pickupLabels[lang][status];
 }
 
 const COPY = {
@@ -3319,13 +3334,14 @@ function AccountPage({
                   <article className="customer-order" key={order.id}>
                     <div className="customer-order-summary">
                       <div><strong>{order.id}</strong><span>{new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium" }).format(new Date(order.createdAt))}</span></div>
-                      <div><span className={`customer-order-status status-${order.status}`}>{ORDER_STATUS_LABELS[lang][order.status]}</span><strong>{price(order.total, lang)}</strong></div>
+                      <div><span className={`customer-order-status status-${order.status}`}>{orderStatusLabel(order, order.status, lang)}</span><strong>{price(order.total, lang)}</strong></div>
                     </div>
-                    <div className="customer-order-progress" aria-label={`${lang === "pt" ? "Estado" : "Status"}: ${ORDER_STATUS_LABELS[lang][order.status]}`}>
+                    <div className="customer-order-progress" aria-label={`${lang === "pt" ? "Estado" : "Status"}: ${orderStatusLabel(order, order.status, lang)}`}>
                       {ORDER_STATUS_SEQUENCE.map((status, index) => (
-                        <span className={index <= currentStep ? "complete" : ""} key={status}><i /><small>{ORDER_STATUS_LABELS[lang][status]}</small></span>
+                        <span className={index <= currentStep ? "complete" : ""} key={status}><i /><small>{orderStatusLabel(order, status, lang)}</small></span>
                       ))}
                     </div>
+                    {isStorePickupOrder(order) && <div className="customer-pickup-details"><Store size={15} /><span>{lang === "pt" ? "Levantamento em loja" : "Store pickup"}</span><strong>{order.shippingDescription || STORE_PICKUP_CARRIER.description}</strong></div>}
                     {order.trackingNumber && (
                       <div className="customer-tracking"><Truck size={15} /><span>{lang === "pt" ? "Código de seguimento" : "Tracking number"}</span><strong>{order.trackingNumber}</strong>{order.trackingCarrier && <a href={TRACKING_URLS[order.trackingCarrier](order.trackingNumber)} target="_blank" rel="noreferrer">{lang === "pt" ? `Seguir nos ${order.trackingCarrier === "ctt" ? "CTT" : "Via Direta"}` : `Track with ${order.trackingCarrier === "ctt" ? "CTT" : "Via Direta"}`}</a>}</div>
                     )}
@@ -3825,6 +3841,11 @@ function AdminPage({
   }
 
   function selectOrderStatus(order: Order, status: OrderStatus) {
+    if (status === "shipped" && isStorePickupOrder(order)) {
+      setPendingStatuses((items) => ({ ...items, [order.id]: status }));
+      changeOrder(order.id, { status });
+      return;
+    }
     if (status === "shipped") {
       setPendingStatuses((items) => ({ ...items, [order.id]: status }));
       setTrackingDrafts((items) => ({ ...items, [order.id]: items[order.id] ?? order.trackingNumber ?? "" }));
@@ -4187,10 +4208,10 @@ function AdminPage({
                         <label className="admin-order-status">
                           <span>{copy.orderStatus}</span>
                           <select value={pendingStatuses[order.id] ?? order.status} onChange={(event) => selectOrderStatus(order, event.target.value as OrderStatus)}>
-                            {(Object.keys(copy.statuses) as OrderStatus[]).map((status) => <option value={status} key={status}>{copy.statuses[status]}</option>)}
+                            {(Object.keys(copy.statuses) as OrderStatus[]).map((status) => <option value={status} key={status}>{orderStatusLabel(order, status, lang)}</option>)}
                           </select>
                         </label>
-                        {(pendingStatuses[order.id] ?? order.status) === "shipped" && (
+                        {(pendingStatuses[order.id] ?? order.status) === "shipped" && !isStorePickupOrder(order) && (
                           <div className="admin-tracking-form">
                             <input value={trackingDrafts[order.id] ?? order.trackingNumber ?? ""} onChange={(event) => setTrackingDrafts((items) => ({ ...items, [order.id]: event.target.value }))} placeholder={copy.tracking} aria-label={copy.tracking} />
                             <fieldset className="admin-tracking-carriers">
@@ -4215,7 +4236,10 @@ function AdminPage({
                   </section>
                   <section>
                     <h3>{copy.delivery}</h3>
-                    <p className="admin-address"><MapPin size={15} /><span>{order.customer.address}<br />{order.customer.postal} {order.customer.city}</span></p>
+                    {isStorePickupOrder(order) ? <>
+                      <p className="admin-address admin-store-pickup"><Store size={15} /><span><strong>{lang === "pt" ? "Levantamento em loja" : "Store pickup"}</strong><br />{order.shippingDescription || STORE_PICKUP_CARRIER.description}</span></p>
+                      <p className="admin-address"><MapPin size={15} /><span>{lang === "pt" ? "Morada do cliente" : "Customer address"}: {order.customer.address}<br />{order.customer.postal} {order.customer.city}</span></p>
+                    </> : <p className="admin-address"><MapPin size={15} /><span>{order.customer.address}<br />{order.customer.postal} {order.customer.city}</span></p>}
                   </section>
                   <section>
                     <h3>{copy.payment}</h3>
@@ -4482,10 +4506,14 @@ function CheckoutPage({
   const { settings: shippingSettings, ready: shippingReady, error: shippingError, previewChanged } = useShippingSettings();
   const [carrierSelection, setCarrierSelection] = useState<Partial<Record<ShippingZone, string>>>({});
   const carriers = shippingSettings[shippingZone].carriers;
-  const selectedCarrier = carriers.find((carrier) => carrier.id === carrierSelection[shippingZone]) ?? carriers[0];
+  const selectedCarrierId = carrierSelection[shippingZone];
+  const selectedCarrier = selectedCarrierId === STORE_PICKUP_CARRIER_ID
+    ? STORE_PICKUP_CARRIER
+    : carriers.find((carrier) => carrier.id === selectedCarrierId) ?? carriers[0] ?? STORE_PICKUP_CARRIER;
+  const storePickupSelected = selectedCarrier.id === STORE_PICKUP_CARRIER_ID;
   const hasGiftCardPurchase = cart.some((item) => item.isGiftCard);
   const hasPhysicalItems = cart.some((item) => !item.isGiftCard);
-  const shippingBlocked = hasPhysicalItems && (!shippingReady || Boolean(shippingError) || !selectedCarrier || (firebaseEnabled && previewChanged));
+  const shippingBlocked = hasPhysicalItems && !storePickupSelected && (!shippingReady || Boolean(shippingError) || (firebaseEnabled && previewChanged));
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const eligibleSubtotal = cart.filter((item) => !item.isGiftCard).reduce((sum, item) => sum + item.price * item.qty, 0);
   const shipping = hasPhysicalItems && selectedCarrier && eligibleSubtotal > 0 ? getShippingCost(eligibleSubtotal, shippingZone, shippingSettings, selectedCarrier.id) : 0;
@@ -4596,8 +4624,9 @@ function CheckoutPage({
       subtotal,
       shipping,
       shippingZone,
+      deliveryMethod: storePickupSelected ? "store_pickup" : (hasPhysicalItems ? "shipping" : "digital"),
       shippingCarrierId: selectedCarrier?.id,
-      shippingCarrierName: selectedCarrier?.name ?? (lang === "pt" ? "Entrega digital" : "Digital delivery"),
+      shippingCarrierName: storePickupSelected && lang === "en" ? "Store pickup" : selectedCarrier?.name ?? (lang === "pt" ? "Entrega digital" : "Digital delivery"),
       shippingDescription: selectedCarrier?.description,
       couponCode: appliedCoupon?.code,
       discount: appliedCoupon?.discount,
@@ -4770,13 +4799,13 @@ function CheckoutPage({
                 </div>
               </div>
               <fieldset className="checkout-carriers field full">
-                <legend>{lang === "pt" ? "Transportadora" : "Carrier"}</legend>
-                {carriers.map((carrier) => <label className={`checkout-carrier ${selectedCarrier?.id === carrier.id ? "selected" : ""}`} key={carrier.id}>
+                <legend>{lang === "pt" ? "Método de entrega" : "Delivery method"}</legend>
+                {[...carriers, STORE_PICKUP_CARRIER].map((carrier) => <label className={`checkout-carrier ${carrier.id === STORE_PICKUP_CARRIER_ID ? "store-pickup" : ""} ${selectedCarrier?.id === carrier.id ? "selected" : ""}`} key={carrier.id}>
                   <input type="radio" name="shippingCarrier" value={carrier.id} checked={selectedCarrier?.id === carrier.id} onChange={() => setCarrierSelection((current) => ({ ...current, [shippingZone]: carrier.id }))} />
-                  <span><strong>{carrier.name === "Envio standard" && lang === "en" ? "Standard shipping" : carrier.name}</strong>{carrier.description && <small>{carrier.description}</small>}</span>
+                  <span><strong>{carrier.id === STORE_PICKUP_CARRIER_ID && lang === "en" ? "Store pickup" : carrier.name === "Envio standard" && lang === "en" ? "Standard shipping" : carrier.name}</strong>{carrier.description && <small>{carrier.description}</small>}{carrier.id === STORE_PICKUP_CARRIER_ID && <small>{lang === "pt" ? "Avisamos por email quando estiver pronta." : "We will email you when it is ready."}</small>}</span>
                   <b>{getShippingCost(eligibleSubtotal, shippingZone, shippingSettings, carrier.id) === 0 ? copy.free : price(carrier.price, lang)}</b>
                 </label>)}
-                {!selectedCarrier && <p role="status">{lang === "pt" ? "Entregas indisponíveis nesta zona." : "Delivery is unavailable in this zone."}</p>}
+                {!carriers.length && !storePickupSelected && <p role="status">{lang === "pt" ? "O envio está indisponível nesta zona; ainda pode escolher levantamento em loja." : "Shipping is unavailable for this zone; store pickup is still available."}</p>}
               </fieldset>
               <label className="field full"><span>{copy.notes}</span><textarea name="notes" rows={3} /></label>
             </div>
@@ -4877,9 +4906,11 @@ function CheckoutPage({
             {selectedReward && <p className="summary-discount"><span>{lang === "pt" ? `Recompensa (${selectedReward.points} pontos)` : `Reward (${selectedReward.points} points)`}</span><strong>-{price(loyaltyDiscountAmount, lang)}</strong></p>}
             {selectedReward?.gift && <p className="summary-loyalty-gift"><span>{lang === "pt" ? "Perfume surpresa" : "Surprise perfume"}</span><strong>{lang === "pt" ? "Oferta" : "Gift"}</strong></p>}
             {selectedGiftCard && <p className="summary-discount"><span>Gift card ({selectedGiftCard.code})</span><strong>-{price(giftCardAmount, lang)}</strong></p>}
-            <p><span>{copy.shippingZone}</span><strong>{hasPhysicalItems ? copy.shippingZones[shippingZone] : (lang === "pt" ? "Entrega digital" : "Digital delivery")}</strong></p>
-            {hasPhysicalItems && selectedCarrier && <p><span>{lang === "pt" ? "Transportadora" : "Carrier"}</span><strong>{selectedCarrier.name}</strong></p>}
-            <p><span>{copy.shipping}</span><strong>{hasPhysicalItems && !selectedCarrier ? (lang === "pt" ? "Indisponível" : "Unavailable") : shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
+            {storePickupSelected && hasPhysicalItems ? <p><span>{lang === "pt" ? "Entrega" : "Delivery"}</span><strong>{lang === "pt" ? "Levantamento em loja" : "Store pickup"}</strong></p> : <>
+              <p><span>{copy.shippingZone}</span><strong>{hasPhysicalItems ? copy.shippingZones[shippingZone] : (lang === "pt" ? "Entrega digital" : "Digital delivery")}</strong></p>
+              {hasPhysicalItems && selectedCarrier && <p><span>{lang === "pt" ? "Transportadora" : "Carrier"}</span><strong>{selectedCarrier.name}</strong></p>}
+            </>}
+            <p><span>{lang === "pt" ? "Custo de entrega" : "Delivery cost"}</span><strong>{shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
             <p className="summary-total"><span>{copy.total}</span><strong>{price(total, lang)}</strong></p>
           </div>
           <label className="checkout-legal-acceptance">
@@ -4893,8 +4924,8 @@ function CheckoutPage({
           </label>
           {checkoutError && <p className="auth-error" role="alert">{checkoutError}</p>}
           {decantCheckoutBlocked && <p className="auth-error" role="alert">{blockedDecantInCart ? (lang === "pt" ? "Um tamanho de decant no carrinho está esgotado. Retire-o antes de continuar." : "A decant size in your cart is sold out. Remove it before continuing.") : (lang === "pt" ? "A aguardar confirmação da disponibilidade dos decants." : "Waiting for decant availability confirmation.")}</p>}
-          {shippingError && <p className="auth-error" role="alert">{shippingError}</p>}
-          {firebaseEnabled && previewChanged && <p className="shipping-settings-notice" role="status">{lang === "pt" ? "Portes em teste local. Para evitar cobranças com valores diferentes, o pagamento fica indisponível até publicar estas configurações no servidor." : "Shipping rates are in local preview. Payment is unavailable until these settings are published to the server, to prevent a different charge."}</p>}
+          {shippingError && !storePickupSelected && <p className="auth-error" role="alert">{shippingError}</p>}
+          {firebaseEnabled && previewChanged && !storePickupSelected && <p className="shipping-settings-notice" role="status">{lang === "pt" ? "Portes em teste local. Para evitar cobranças com valores diferentes, o pagamento fica indisponível até publicar estas configurações no servidor." : "Shipping rates are in local preview. Payment is unavailable until these settings are published to the server, to prevent a different charge."}</p>}
           <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy || shippingBlocked || decantCheckoutBlocked}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
           <p className="secure-note"><LockKeyhole size={14} />{copy.secure}</p>
         </aside>

@@ -1,5 +1,12 @@
 export const SHIPPING_ZONE_IDS = Object.freeze(['continental', 'islands', 'spain']);
 export const MAX_CARRIERS = 10;
+export const STORE_PICKUP_CARRIER_ID = 'store-pickup';
+export const STORE_PICKUP_CARRIER = Object.freeze({
+  id: STORE_PICKUP_CARRIER_ID,
+  name: 'Levantamento em loja',
+  price: 0,
+  description: 'R. São Nicolau 8, Lj 20, 4520-248 Santa Maria da Feira',
+});
 export const DEFAULT_SHIPPING_SETTINGS = Object.freeze(Object.fromEntries(
   [['continental', 4.9, 85], ['islands', 12, 100], ['spain', 10, 100]].map(([zone, price, freeFrom]) => [zone, {
     freeFrom, carriers: [{ id: 'standard', name: 'Envio standard', price, description: '' }],
@@ -41,6 +48,7 @@ export function normalizeShippingSettings(value) {
 
 export function getShippingCarrier(zone, settings = DEFAULT_SHIPPING_SETTINGS, carrierId) {
   if (!isValidShippingSettings(settings) || !SHIPPING_ZONE_IDS.includes(zone)) throw new Error('Invalid shipping settings');
+  if (carrierId === STORE_PICKUP_CARRIER_ID) return STORE_PICKUP_CARRIER;
   const carriers = settings[zone].carriers;
   return (carrierId === undefined ? carriers[0] : carriers.find((carrier) => carrier.id === carrierId)) ?? null;
 }

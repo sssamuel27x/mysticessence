@@ -4,6 +4,8 @@ export type ShippingSettings = Record<ShippingZone, { freeFrom: number; carriers
 export const SHIPPING_ZONE_IDS: readonly ShippingZone[];
 export const MAX_CARRIERS: number;
 export const DEFAULT_SHIPPING_SETTINGS: ShippingSettings;
+export const STORE_PICKUP_CARRIER_ID: 'store-pickup';
+export const STORE_PICKUP_CARRIER: Readonly<ShippingCarrier>;
 export function isValidShippingSettings(value: unknown): value is ShippingSettings;
 export function normalizeShippingSettings(value: unknown): ShippingSettings | null;
 export function getShippingCarrier(zone: ShippingZone, settings?: ShippingSettings, carrierId?: string): ShippingCarrier | null;

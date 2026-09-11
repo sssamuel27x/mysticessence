@@ -271,6 +271,21 @@ test("checkout charges the server carrier rate and records carrier details", asy
   assert.equal(JSON.parse(state.fetch.mock.calls[0].arguments[1].body).amount, '25.90');
 });
 
+test("store pickup is free and is recorded as the delivery method", async (t) => {
+  const state = setup(t);
+  const request = checkoutRequest("912345678");
+  Object.assign(request.data, { shippingCarrierId: "store-pickup", expectedShipping: 0 });
+  const result = await createCheckout.run(request);
+  const order = state.documents.get(`orders/${result.orderId}`);
+  assert.equal(order.shipping, 0);
+  assert.equal(order.total, 20);
+  assert.equal(order.deliveryMethod, "store_pickup");
+  assert.equal(order.shippingCarrierId, "store-pickup");
+  assert.equal(order.shippingCarrierName, "Levantamento em loja");
+  assert.match(order.shippingDescription, /São Nicolau/);
+  assert.equal(JSON.parse(state.fetch.mock.calls[0].arguments[1].body).amount, "20.00");
+});
+
 for (const scenario of ['deleted carrier', 'empty zone', 'stale quote']) {
   test(`${scenario} fails before stock, order or payment changes`, async (t) => {
     const state = setup(t);

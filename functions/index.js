@@ -51,6 +51,12 @@ const shippingZones = {
   islands: { label: "Madeira / Açores", fee: 12, freeFrom: 100 },
   spain: { label: "Espanha", fee: 10, freeFrom: 100 },
 };
+const storePickupCarrierId = "store-pickup";
+const storePickupAddress = "R. São Nicolau 8, Lj 20, 4520-248 Santa Maria da Feira";
+
+function isStorePickupOrder(order) {
+  return order?.deliveryMethod === "store_pickup" || order?.shippingCarrierId === storePickupCarrierId;
+}
 
 function text(value, max = 500) {
   return String(value ?? "").trim().slice(0, max);
@@ -146,7 +152,10 @@ function totalsHtml(order) {
     loyaltyDiscount > 0 ? `<div><span>Recompensa (${html(order.loyaltyPointsSpent)} pontos)</span><strong style="float:right;color:#ddb64e">-${currency.format(loyaltyDiscount)}</strong></div>` : "",
   ].join("") || (discount > 0 ? `<div><span>Desconto</span><strong style="float:right;color:#ddb64e">-${currency.format(discount)}</strong></div>` : "");
   const giftCardRow = Number(order.giftCardAmountUsed || 0) > 0 ? `<div><span>Gift card (${html(order.giftCardCode || order.giftCardId)})</span><strong style="float:right;color:#ddb64e">-${currency.format(order.giftCardAmountUsed)}</strong></div>` : "";
-  return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discountRows}${giftCardRow}<div><span>Zona de entrega</span><strong style="float:right;color:#f5efe3">${html(shippingZones[zone].label)}</strong></div>${order.shippingCarrierName ? `<div><span>Transportadora</span><strong style="float:right;color:#f5efe3">${html(order.shippingCarrierName)}</strong></div>${order.shippingDescription ? `<div>${html(order.shippingDescription)}</div>` : ""}` : ""}<div><span>Envio</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
+  const deliveryRows = isStorePickupOrder(order)
+    ? `<div><span>Método de entrega</span><strong style="float:right;color:#f5efe3">Levantamento em loja</strong></div><div>${html(order.shippingDescription || storePickupAddress)}</div>`
+    : `<div><span>Zona de entrega</span><strong style="float:right;color:#f5efe3">${html(shippingZones[zone].label)}</strong></div>${order.shippingCarrierName ? `<div><span>Transportadora</span><strong style="float:right;color:#f5efe3">${html(order.shippingCarrierName)}</strong></div>${order.shippingDescription ? `<div>${html(order.shippingDescription)}</div>` : ""}` : ""}`;
+  return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discountRows}${giftCardRow}${deliveryRows}<div><span>Custo de entrega</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
 }
 
 function loyaltyEmailHtml(order, audience) {
@@ -216,7 +225,7 @@ function couponPercentage(coupon) {
 }
 
 async function createOrderRecord(request, paymentMode) {
-  const { DEFAULT_SHIPPING_SETTINGS, normalizeShippingSettings, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
+  const { DEFAULT_SHIPPING_SETTINGS, STORE_PICKUP_CARRIER_ID, normalizeShippingSettings, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
   const { loyaltyDiscountForSubtotal, loyaltyPointsForAmount, loyaltyRewardById, normalizeLoyaltyPoints } = await import("./loyalty.mjs");
   const { GIFT_CARD_PRODUCT_ID, giftCardAmountForTotal, giftCardValueForVolume, normalizeGiftCardBalance } = await import("./gift-cards.mjs");
   const input = request.data || {};
@@ -477,6 +486,7 @@ async function createOrderRecord(request, paymentMode) {
       subtotal,
       shipping,
       shippingZone,
+      deliveryMethod: carrier?.id === STORE_PICKUP_CARRIER_ID ? "store_pickup" : (hasPhysicalItems ? "shipping" : "digital"),
       shippingCarrierId: carrier?.id || null,
       shippingCarrierName: carrier?.name || (hasPhysicalItems ? null : "Entrega digital"),
       shippingDescription: carrier?.description || (hasPhysicalItems ? null : "Disponível na conta após confirmação do pagamento."),
@@ -1280,8 +1290,15 @@ async function queuePaidOrderEmails(order, orderId) {
   const address = `${html(order.customer.address)}, ${html(order.customer.postal)} ${html(order.customer.city)}`;
   const shippingZone = normalizeShippingZone(order.shippingZone);
   const couponDiscountAmount = Number(order.couponDiscountAmount ?? (!order.loyaltyRewardId ? order.discountAmount : 0));
-  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${loyaltyEmailHtml(order, "owner")}${giftCardEmailHtml(order, "owner")}${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(couponDiscountAmount)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
-  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${loyaltyEmailHtml(order, "customer")}${giftCardEmailHtml(order, "customer")}${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando a encomenda for enviada.</p>`);
+  const pickup = isStorePickupOrder(order);
+  const deliveryDetails = pickup
+    ? `<strong>Entrega:</strong> LEVANTAMENTO EM LOJA<br><strong>Local de levantamento:</strong> ${html(order.shippingDescription || storePickupAddress)}`
+    : `<strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}`;
+  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, pickup ? "O pagamento foi confirmado. Esta encomenda é para levantamento em loja." : "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${loyaltyEmailHtml(order, "owner")}${giftCardEmailHtml(order, "owner")}${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br>${deliveryDetails}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(couponDiscountAmount)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
+  const customerUpdate = pickup
+    ? "Avisaremos por email quando a encomenda estiver pronta para levantamento. Aguarde por essa confirmação antes de se deslocar à loja."
+    : "Enviaremos uma nova atualização quando a encomenda for enviada.";
+  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${loyaltyEmailHtml(order, "customer")}${giftCardEmailHtml(order, "customer")}${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">${customerUpdate}</p>`);
 
   await Promise.all([
     queueEmail(ownerEmail.value(), `Nova encomenda paga ${orderId} · Mystic Essence`, ownerBody, `order-${orderId}-owner-paid`),
@@ -1318,7 +1335,12 @@ exports.notifyCustomerOfPayment = onDocumentUpdated({ document: "orders/{orderId
   const newlyShipped = before.status !== "shipped" && order.status === "shipped";
   const trackingAdded = before.trackingNumber !== order.trackingNumber || before.trackingCarrier !== order.trackingCarrier;
   const tracking = trackingDetails(order);
-  if (order.paymentStatus === "paid" && (newlyShipped || trackingAdded) && tracking && !order.trackingEmailSentAt) {
+  if (order.paymentStatus === "paid" && newlyShipped && isStorePickupOrder(order) && !order.pickupReadyEmailSentAt) {
+    const pickupPanel = `<div style="margin-top:24px;padding:18px;border:1px solid #8d691e"><span style="color:#a99e8d">Local de levantamento</span><p style="margin:8px 0 0;color:#f4eee2;line-height:1.7"><strong>${html(order.shippingDescription || storePickupAddress)}</strong></p></div>`;
+    const body = emailFrame("A sua encomenda está pronta", `A encomenda ${html(event.params.orderId)} já pode ser levantada na nossa loja.`, `${pickupPanel}<p style="color:#c7beb0;line-height:1.6">Apresente o número da encomenda no levantamento.</p>`);
+    await queueEmail(order.customer.email, `Encomenda pronta para levantamento ${event.params.orderId} · Mystic Essence`, body, `order-${event.params.orderId}-pickup-ready`);
+    await event.data.after.ref.update({ pickupReadyEmailSentAt: FieldValue.serverTimestamp() });
+  } else if (order.paymentStatus === "paid" && (newlyShipped || trackingAdded) && tracking && !order.trackingEmailSentAt) {
     const trackingPanel = `<div style="margin-top:24px;padding:18px;border:1px solid #8d691e"><span style="color:#a99e8d">Transportadora</span><p style="margin:6px 0 16px;color:#f4eee2"><strong>${html(tracking.carrierLabel)}</strong></p><span style="color:#a99e8d">Número de seguimento</span><p style="margin:8px 0 18px;font-size:24px;color:#ddb64e"><strong>${html(tracking.trackingNumber)}</strong></p><a href="${html(tracking.url)}" style="display:inline-block;padding:12px 18px;background:#c99522;color:#080706;text-decoration:none;font-weight:700">Seguir a encomenda</a></div>`;
     const body = emailFrame("A sua encomenda foi enviada", `A encomenda ${html(event.params.orderId)} já está a caminho.`, trackingPanel);
     await queueEmail(order.customer.email, `Encomenda enviada ${event.params.orderId} · Mystic Essence`, body, `order-${event.params.orderId}-shipped`);
