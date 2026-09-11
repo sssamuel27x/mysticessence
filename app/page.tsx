@@ -61,7 +61,6 @@ import {
   watchSession,
 } from "./firebase";
 import {
-  Apple,
   Archive,
   ArchiveRestore,
   ArrowLeft,
@@ -73,7 +72,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Citrus,
   Cookie,
   CreditCard,
   Clock3,
@@ -84,7 +82,6 @@ import {
   Headphones,
   History,
   Folder,
-  Flower2,
   Gift,
   LockKeyhole,
   LogOut,
@@ -111,7 +108,6 @@ import {
   Phone,
   Trash2,
   Truck,
-  Trees,
   User,
   X,
 } from "lucide-react";
@@ -2222,18 +2218,12 @@ function ShowcaseProductCard({
 }
 
 function ScentProfiles({ lang, onProfile }: { lang: Lang; onProfile: (profile: ScentProfile) => void }) {
-  const profiles = lang === "pt" ? [
-    { id: "fresh" as const, icon: Citrus, label: "Frescos e cítricos" },
-    { id: "fruity" as const, icon: Apple, label: "Frutados" },
-    { id: "floral" as const, icon: Flower2, label: "Florais" },
-    { id: "sweet" as const, icon: Cookie, label: "Doces e Gourmand" },
-    { id: "woody" as const, icon: Trees, label: "Amadeirados e especiados" },
-  ] : [
-    { id: "fresh" as const, icon: Citrus, label: "Fresh and citrus" },
-    { id: "fruity" as const, icon: Apple, label: "Fruity" },
-    { id: "floral" as const, icon: Flower2, label: "Floral" },
-    { id: "sweet" as const, icon: Cookie, label: "Sweet" },
-    { id: "woody" as const, icon: Trees, label: "Woody and spicy" },
+  const profiles = [
+    { id: "fresh" as const, image: "/scent-profile-fresh.png", width: 837, height: 183, pt: "Frescos e cítricos", en: "Fresh and citrus" },
+    { id: "fruity" as const, image: "/scent-profile-fruity.png", width: 837, height: 183, pt: "Frutados", en: "Fruity" },
+    { id: "floral" as const, image: "/scent-profile-floral.png", width: 837, height: 184, pt: "Florais", en: "Floral" },
+    { id: "sweet" as const, image: "/scent-profile-sweet.png", width: 837, height: 185, pt: "Doces e Gourmand", en: "Sweet and gourmand" },
+    { id: "woody" as const, image: "/scent-profile-woody.png", width: 837, height: 203, pt: "Amadeirados e especiados", en: "Woody and spicy" },
   ];
 
   return (
@@ -2241,12 +2231,25 @@ function ScentProfiles({ lang, onProfile }: { lang: Lang; onProfile: (profile: S
       <h2>{lang === "pt" ? "Descobre por perfil olfativo" : "Discover by scent profile"}</h2>
       <div className="scent-profile-band">
         <div className="scent-profile-grid">
-          {profiles.map(({ id, icon: Icon, label }) => (
-            <button key={id} onClick={() => onProfile(id)}>
-              <Icon size={30} strokeWidth={1.55} />
-              <span>{label}</span>
-            </button>
-          ))}
+          {profiles.map(({ id, image, width, height, pt, en }) => {
+            const label = lang === "pt" ? pt : en;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onProfile(id)}
+                aria-label={lang === "pt" ? `Ver perfumes ${label}` : `View ${label} perfumes`}
+              >
+                <Image
+                  src={image}
+                  alt=""
+                  width={width}
+                  height={height}
+                  sizes="(max-width: 620px) calc(100vw - 20px), (max-width: 940px) calc(50vw - 28px), 470px"
+                />
+              </button>
+            );
+          })}
         </div>
       </div>
     </section>

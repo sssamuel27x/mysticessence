@@ -1701,51 +1701,53 @@ a {
 }
 
 .scent-profile-band {
-  padding: 0 14px;
-  background:
-    linear-gradient(rgba(3, 2, 2, 0.23), rgba(3, 2, 2, 0.23)),
-    url("/scent-profiles-bg.png") center / cover no-repeat;
+  padding: 0 clamp(14px, 3vw, 44px);
 }
 
 .scent-profile-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: clamp(12px, 2vw, 30px);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(10px, 1.3vw, 20px);
+  width: min(1460px, 100%);
+  margin: 0 auto;
   padding: 0;
 }
 
 .scent-profile-grid button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
+  grid-column: span 2;
+  display: block;
   min-width: 0;
-  min-height: 166px;
-  padding: 24px;
-  border: 1px solid rgba(239, 234, 224, 0.72);
-  background: rgba(2, 2, 2, 0.5);
-  color: #d1a72b;
-  transition: border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+  padding: 0;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  line-height: 0;
+  filter: drop-shadow(0 9px 15px rgba(0, 0, 0, 0.45));
+  transition: filter 0.2s ease, transform 0.2s ease;
+}
+
+.scent-profile-grid button:nth-child(4) {
+  grid-column: 2 / span 2;
+}
+
+.scent-profile-grid button:nth-child(5) {
+  grid-column: 4 / span 2;
 }
 
 .scent-profile-grid button:hover {
-  border-color: #e2b84f;
-  color: #f1d36e;
   transform: translateY(-3px);
+  filter: brightness(1.08) drop-shadow(0 11px 18px rgba(211, 158, 34, 0.14));
 }
 
-.scent-profile-grid svg {
-  flex: 0 0 auto;
+.scent-profile-grid button:focus-visible {
+  outline: 2px solid #f0c95c;
+  outline-offset: 3px;
 }
 
-.scent-profile-grid span {
-  max-width: 210px;
-  font-family: var(--font-display);
-  font-size: clamp(20px, 1.65vw, 28px);
-  font-weight: 600;
-  line-height: 1.05;
-  text-align: left;
-  text-transform: uppercase;
+.scent-profile-grid img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .whatsapp-consultation-banner {
@@ -7688,8 +7690,15 @@ select {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .scent-profile-grid button,
+  .scent-profile-grid button:nth-child(4) {
+    grid-column: auto;
+  }
+
   .scent-profile-grid button:last-child {
     grid-column: 1 / -1;
+    width: calc(50% - 10px);
+    justify-self: center;
   }
 
   .product-grid,
@@ -8086,12 +8095,12 @@ select {
 
   .scent-profile-section > h2 {
     margin-bottom: 24px;
-    font-size: 24px;
+    font-size: 21px;
     line-height: 1.08;
   }
 
   .scent-profile-band {
-    padding-inline: 16px;
+    padding-inline: 10px;
   }
 
   .scent-profile-grid {
@@ -8101,15 +8110,11 @@ select {
 
   .scent-profile-grid button:last-child {
     grid-column: auto;
+    width: 100%;
   }
 
   .scent-profile-grid button {
-    min-height: 72px;
-    padding: 12px 14px;
-  }
-
-  .scent-profile-grid span {
-    color: #f4efe6;
+    border-radius: 18px;
   }
 
   .product-grid,
@@ -9999,10 +10004,6 @@ select {
     right: 8px;
     width: 32px;
     height: 32px;
-  }
-
-  .scent-profile-grid button {
-    background: rgba(2, 2, 2, 0.5);
   }
 
   .buy-row {

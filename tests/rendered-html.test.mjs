@@ -71,10 +71,12 @@ test("keeps admin pricing protected and its product editor responsive", async ()
   assert.match(page, /className="primary-button" onClick=\{onCheckout\}|className="primary-button cart-checkout-button" onClick=\{onCheckout\}/);
   assert.match(css, /\.cart-drawer\s*\{[^}]*width:\s*min\(580px, 100vw\)/s);
   assert.match(css, /\.cart-summary\s*\{[^}]*safe-area-inset-bottom/s);
-  assert.match(css, /\.scent-profile-grid button\s*\{[^}]*min-height:\s*166px/s);
-  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-grid button\s*\{[^}]*min-height:\s*72px/s);
-  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-section > h2\s*\{[^}]*font-size:\s*24px/s);
-  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-grid span\s*\{[^}]*color:\s*#f4efe6/s);
+  assert.match(page, /image:\s*"\/scent-profile-fresh\.png"/);
+  assert.match(page, /image:\s*"\/scent-profile-woody\.png"/);
+  assert.match(page, /aria-label=\{lang === "pt" \? `Ver perfumes \$\{label\}`/);
+  assert.match(css, /\.scent-profile-grid\s*\{[^}]*grid-template-columns:\s*repeat\(6,/s);
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-section > h2\s*\{[^}]*font-size:\s*21px/s);
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.scent-profile-grid\s*\{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(firestoreRules, /match \/settings\/decants/);
   assert.match(firestoreRules, /match \/settings\/decantStock/);
   assert.match(firestoreRules, /allow create, update: if isAdmin\(\)/);
