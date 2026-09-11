@@ -61,6 +61,7 @@ before(async () => {
   await server.doc(`profiles/${alice.uid}`).set({ name: 'Alice', email: alice.email });
   await server.doc(`profiles/${bob.uid}`).set({ name: 'Bob', email: bob.email });
   await server.doc(`profiles/${alice.uid}/loyaltyHistory/earn-audit`).set({ customerUid: alice.uid, orderId: 'alice-order', kind: 'earn', status: 'completed', points: 100, createdAt: '2026-01-01T00:00:00.000Z' });
+  await server.doc(`profiles/${alice.uid}/giftCards/gift-audit`).set({ ownerUid: alice.uid, code: 'MEGC-AUDIT-01', originalValue: 50, balance: 35, status: 'active', sourceOrderId: 'alice-order', createdAt: '2026-01-01T00:00:00.000Z' });
   await server.doc('orders/alice-order').set({ customerUid: alice.uid, paymentStatus: 'paid', status: 'received', total: 100 });
   await server.doc('orders/bob-order').set({ customerUid: bob.uid, paymentStatus: 'pending', total: 90 });
   await server.doc('influencerCouponUses/alice-use').set({ influencerUid: alice.uid, discountAmount: 5 });
@@ -123,6 +124,14 @@ test('loyalty history is private and server controlled', async () => {
   assert.equal((await getDocFromServer(doc(reader.db, path))).data().points, 100);
   await denied(getDocFromServer(doc(bob.db, path)));
   await denied(setDoc(doc(alice.db, `profiles/${alice.uid}/loyaltyHistory/forged`), { points: 1000 }));
+});
+test('gift card balances are private and server controlled', async () => {
+  const path = `profiles/${alice.uid}/giftCards/gift-audit`;
+  assert.equal((await getDocFromServer(doc(reader.db, path))).data().balance, 35);
+  await denied(getDocFromServer(doc(bob.db, path)));
+  await denied(setDoc(doc(alice.db, `profiles/${alice.uid}/giftCards/forged`), { balance: 1000, status: 'active' }));
+  await denied(updateDoc(doc(alice.db, path), { balance: 1000 }));
+  await denied(deleteDoc(doc(alice.db, path)));
 });
 test('favorites create/update/delete persist across independent clients', async () => {
   const path = `profiles/${alice.uid}/favoriteFolders/travel`;

@@ -487,6 +487,14 @@ export function watchLoyaltyHistory<T>(uid: string, callback: (entries: T[]) => 
   }, () => { if (auth?.currentUser?.uid === uid) { callback([]); syncFailed(); } });
 }
 
+export function watchGiftCards<T>(uid: string, callback: (cards: T[]) => void) {
+  if (!database) return () => undefined;
+  return onSnapshot(query(collection(database, "profiles", uid, "giftCards"), orderBy("createdAt", "desc"), limit(100)), (snapshot) => {
+    if (auth?.currentUser?.uid !== uid) return;
+    callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as T)));
+  }, () => { if (auth?.currentUser?.uid === uid) { callback([]); syncFailed(); } });
+}
+
 export async function setInfluencerAccount(payload: { uid: string; isInfluencer: boolean; couponCode: string | null }) {
   if (!functions) throw new Error("O Firebase ainda não está configurado.");
   const callable = httpsCallable<typeof payload, { uid: string; isInfluencer: boolean; couponCode: string | null }>(functions, "setInfluencerAccount");
@@ -601,8 +609,8 @@ export async function deleteFavoriteFolder(uid: string, folderId: string) {
 export type IfthenpayCheckoutResult = {
   orderId: string;
   amount: number;
-  method: "mbway" | "multibanco" | "payshop" | "card";
-  paymentStatus: "pending";
+  method: "mbway" | "multibanco" | "payshop" | "card" | "gift-card";
+  paymentStatus: "pending" | "paid";
   paymentUrl?: string;
   entity?: string;
   reference?: string;

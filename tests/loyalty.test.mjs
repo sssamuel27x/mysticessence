@@ -36,7 +36,7 @@ test("points use complete euros and discounts never exceed the product subtotal"
 test("loyalty balances stay server controlled and paid-order processing is idempotent", () => {
   assert.match(functionsSource, /if \(loyaltyReward && !request\.auth\)/);
   assert.doesNotMatch(functionsSource, /if \(loyaltyReward && couponCode\)/);
-  assert.match(functionsSource, /Math\.min\(subtotal, couponDiscountAmount \+ loyaltyDiscountAmount\)/);
+  assert.match(functionsSource, /Math\.min\(eligibleSubtotal, couponDiscountAmount \+ loyaltyDiscountAmount\)/);
   assert.match(functionsSource, /transaction\.create\(loyaltyRedemptionRef/);
   assert.match(functionsSource, /if \(order\.paymentStatus !== "paid" \|\| !order\.customerUid\) return/);
   assert.match(functionsSource, /history\.doc\(`earn-\$\{orderId\}`\)/);

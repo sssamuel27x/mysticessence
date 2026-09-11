@@ -52,6 +52,7 @@ import {
   watchCoupons,
   watchDecantPricing,
   watchFavoriteFolders,
+  watchGiftCards,
   watchInfluencerCouponUses,
   watchLoyaltyHistory,
   watchOrders,
@@ -151,6 +152,7 @@ type Product = {
   discount?: number;
   promotionEndsAt?: string;
   isDecant?: boolean;
+  isGiftCard?: boolean;
   volume: string;
   variants: ProductVariant[];
   color: string;
@@ -159,6 +161,30 @@ type Product = {
   imageUrl?: string;
   imagePath?: string;
   images?: ProductImage[];
+};
+
+const GIFT_CARD_PRODUCT: Product = {
+  id: "gift-card",
+  brand: "Mystic Essence",
+  category: "Outros produtos",
+  scentProfile: "sweet",
+  audiences: ["men", "women", "unisex"],
+  tag: "stock",
+  bestSeller: true,
+  name: { pt: "Gift Card", en: "Gift Card" },
+  family: { pt: "Presente digital", en: "Digital gift" },
+  desc: {
+    pt: "Oferece a liberdade de escolher. O Gift Card Mystic Essence fica disponível na conta após a confirmação do pagamento e pode ser usado numa compra futura.",
+    en: "Give the freedom to choose. The Mystic Essence Gift Card is added to the account after payment confirmation and can be used on a future purchase.",
+  },
+  notes: { top: { pt: [], en: [] }, heart: { pt: [], en: [] }, base: { pt: [], en: [] } },
+  price: 30,
+  volume: "30 €",
+  variants: [30, 50, 80, 100].map((value) => ({ volume: `${value} €`, price: value })),
+  color: "#080706",
+  accent: "#d6a63d",
+  mood: "#161005",
+  isGiftCard: true,
 };
 
 type DraftProductImage = ProductImage & { id: string; file?: File };
@@ -275,7 +301,18 @@ type OrderItem = {
   price: number;
   qty: number;
   isDecant?: boolean;
+  isGiftCard?: boolean;
   imageUrl?: string;
+};
+type GiftCardBalance = {
+  id: string;
+  code: string;
+  originalValue: number;
+  balance: number;
+  status: "active" | "used";
+  sourceOrderId: string;
+  createdAt: string;
+  updatedAt?: string;
 };
 type ProductReview = {
   id: string;
@@ -355,6 +392,9 @@ type Order = {
   loyaltyDiscountAmount?: number;
   loyaltyGift?: boolean;
   loyaltyPointsEarned?: number;
+  giftCardId?: string | null;
+  giftCardCode?: string | null;
+  giftCardAmountUsed?: number;
   termsAccepted?: boolean;
   termsVersion?: string;
   termsAcceptedAt?: string;
@@ -1108,6 +1148,7 @@ function Storefront() {
   const [profiles, setProfiles] = useState<CustomerProfile[]>([]);
   const [influencerUses, setInfluencerUses] = useState<InfluencerCouponUse[]>([]);
   const [loyaltyHistory, setLoyaltyHistory] = useState<LoyaltyHistoryEntry[]>([]);
+  const [giftCards, setGiftCards] = useState<GiftCardBalance[]>([]);
   const [preferredLoyaltyRewardId, setPreferredLoyaltyRewardId] = useState<string | null>(null);
   const [favoriteFolders, setFavoriteFolders] = useState<FavoriteFolder[]>([]);
   const [favoriteProductId, setFavoriteProductId] = useState<string | null>(null);
@@ -1132,7 +1173,7 @@ function Storefront() {
   const sessionOwner = useRef<string | null>(null);
   const t = COPY[lang];
 
-  const activeProduct = catalog.find((product) => product.id === activeId) ?? catalog[0] ?? PRODUCTS[0];
+  const activeProduct = activeId === GIFT_CARD_PRODUCT.id ? GIFT_CARD_PRODUCT : catalog.find((product) => product.id === activeId) ?? catalog[0] ?? PRODUCTS[0];
   const favoriteProduct = catalog.find((product) => product.id === favoriteProductId) ?? null;
   const listingProducts = brandFilter
     ? productsForBrand(productSet(catalog, "all"), brandFilter)
@@ -1142,7 +1183,7 @@ function Storefront() {
   const searchResults = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return catalog.filter((product) => {
+    return [GIFT_CARD_PRODUCT, ...catalog].filter((product) => {
       const haystack = [
         product.name[lang],
         product.brand,
@@ -1215,6 +1256,7 @@ function Storefront() {
     setProfiles([]);
     setInfluencerUses([]);
     setLoyaltyHistory([]);
+    setGiftCards([]);
     setPreferredLoyaltyRewardId(null);
     setFavoriteFolders([]);
     setFavoritesOwner(null);
@@ -1295,6 +1337,12 @@ function Storefront() {
   useEffect(() => {
     if (!session?.uid || !firebaseEnabled) return;
     return watchLoyaltyHistory<LoyaltyHistoryEntry>(session.uid, setLoyaltyHistory);
+  }, [session?.uid]);
+
+  useEffect(() => {
+    setGiftCards([]);
+    if (!session?.uid || !firebaseEnabled) return;
+    return watchGiftCards<GiftCardBalance>(session.uid, setGiftCards);
   }, [session?.uid]);
 
   useEffect(() => {
@@ -1389,6 +1437,11 @@ function Storefront() {
   }
 
   function addToCart(product: Product, quantity = 1) {
+    if (product.isGiftCard && !session) {
+      navigate("/conta", { view: "account", listing, profileFilter });
+      showToast(lang === "pt" ? "Entre na sua conta para comprar um gift card." : "Sign in to buy a gift card.");
+      return;
+    }
     const selectedVariant = product.variants.find((variant) => variant.volume === product.volume) ?? product.variants[0];
     if (selectedVariant?.isDecant && (!decantsReady || decantsError || isDecantBlocked(selectedVariant, blockedSizes))) return;
     const stockLimit = typeof selectedVariant?.stock === "number" ? Math.max(0, selectedVariant.stock) : MAX_ORDER_QUANTITY;
@@ -1521,6 +1574,7 @@ function Storefront() {
             cart={cart}
             coupons={coupons}
             session={session}
+            giftCards={giftCards}
             preferredRewardId={preferredLoyaltyRewardId}
             onRewardChange={setPreferredLoyaltyRewardId}
             onCheckoutStarted={() => setCart([])}
@@ -1539,6 +1593,7 @@ function Storefront() {
             orders={orders}
             influencerUses={influencerUses}
             loyaltyHistory={loyaltyHistory}
+            giftCards={giftCards}
             favoriteFolders={favoriteFolders}
             setFavoriteFolders={setFavoriteFolders}
             onProduct={openProduct}
@@ -2182,7 +2237,9 @@ function ShowcaseProductCard({
   const variantPrices = product.variants.map((variant) => variant.isDecant ? variant.price : (discount ? variant.price * (1 - discount / 100) : variant.price));
   const lowestPrice = decantPrice ?? Math.min(...variantPrices);
   const highestPrice = Math.max(...variantPrices, currentPrice);
-  const priceLabel = lowestPrice < highestPrice
+  const priceLabel = product.isGiftCard
+    ? `${lang === "pt" ? "A partir de" : "From"} ${price(lowestPrice, lang)}`
+    : lowestPrice < highestPrice
     ? `${price(lowestPrice, lang)}–${price(highestPrice, lang)}`
     : price(currentPrice, lang);
 
@@ -2199,15 +2256,15 @@ function ShowcaseProductCard({
           )}
           <ProductVisual product={product} />
         </button>
-        <button className={`home-new-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? `Guardar ${product.name.pt} nos favoritos` : `Save ${product.name.en} to favourites`}>
+        {!product.isGiftCard && <button className={`home-new-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? `Guardar ${product.name.pt} nos favoritos` : `Save ${product.name.en} to favourites`}>
           <Heart size={18} fill={isFavorite ? "currentColor" : "none"} />
-        </button>
+        </button>}
       </div>
       <div className="home-new-copy">
         <span>{label}:</span>
         <button onClick={() => onProduct(product.id)}>{product.name[lang]}</button>
         <small className="home-new-brand">{product.brand}</small>
-        <div className="home-new-rating" aria-label={lang === "pt" ? "Ainda sem avaliações" : "No reviews yet"}><i>☆☆☆☆☆</i><small>(0)</small></div>
+        {!product.isGiftCard && <div className="home-new-rating" aria-label={lang === "pt" ? "Ainda sem avaliações" : "No reviews yet"}><i>☆☆☆☆☆</i><small>(0)</small></div>}
         <strong className={discount > 0 ? "discounted" : ""}>
           {discount > 0 && <del>{price(product.price, lang)}</del>}
           <span>{priceLabel}</span>
@@ -2378,7 +2435,7 @@ function ListingPage({
         <span className="eyebrow">{brand ? (lang === "pt" ? "Marca" : "Brand") : profile ? (lang === "pt" ? "Perfil olfativo" : "Scent profile") : (lang === "pt" ? "Perfumaria Árabe" : "Arabian Perfumery")}</span>
         <h1>{title}</h1>
         {kind === "other" && <p>{lang === "pt" ? "Cremes, coffrets, body mists e ambientadores." : "Creams, gift sets, body mists and home fragrances."}</p>}
-        <small>{filteredProducts.length} {t.products}</small>
+        <small>{filteredProducts.length + 1} {t.products}</small>
       </div>
       <div className="listing-toolbar">
         <span>{activeFilterCount > 0 ? `${activeFilterCount} ${lang === "pt" ? "filtros ativos" : "active filters"}` : ""}</span>
@@ -2433,7 +2490,16 @@ function ListingPage({
           </button>
         </aside>
         <div className="home-new-grid listing-grid listing-showcase-grid">
-          {orderedProducts.length > 0 ? orderedProducts.map((product) => (
+          <ShowcaseProductCard
+            key={GIFT_CARD_PRODUCT.id}
+            product={GIFT_CARD_PRODUCT}
+            label={lang === "pt" ? "Presente digital" : "Digital gift"}
+            lang={lang}
+            onProduct={onProduct}
+            onFavorite={onFavorite}
+            favoriteFolders={favoriteFolders}
+          />
+          {orderedProducts.map((product) => (
             <ShowcaseProductCard
               key={product.id}
               product={product}
@@ -2443,7 +2509,7 @@ function ListingPage({
               onFavorite={onFavorite}
               favoriteFolders={favoriteFolders}
             />
-          )) : <div className="listing-empty"><Search size={28} /><strong>{lang === "pt" ? "Nenhum produto encontrado" : "No products found"}</strong><p>{lang === "pt" ? "Experimente alterar ou limpar os filtros." : "Try changing or clearing the filters."}</p></div>}
+          ))}
         </div>
       </div>
     </section>
@@ -2610,7 +2676,7 @@ function ProductDetail({
           <ProductGallery key={product.id} product={product} lang={lang} />
           <div className="detail-gallery-caption">
             <span>{product.brand}</span>
-            <strong>{isDecant ? "Decant Mystic Essence" : "Fragrância original"}</strong>
+            <strong>{product.isGiftCard ? (lang === "pt" ? "Presente digital" : "Digital gift") : isDecant ? "Decant Mystic Essence" : "Fragrância original"}</strong>
           </div>
         </div>
 
@@ -2619,7 +2685,7 @@ function ProductDetail({
             <span className="eyebrow">{product.brand}</span>
             <h1>{product.name[lang]}</h1>
             <div className="detail-meta-strip">
-              <span><BadgeCheck size={15} /> Original</span>
+              <span><BadgeCheck size={15} /> {product.isGiftCard ? (lang === "pt" ? "Digital" : "Digital") : "Original"}</span>
               <span><ShoppingBag size={15} /> {selectedVolume}</span>
             </div>
           </div>
@@ -2630,7 +2696,7 @@ function ProductDetail({
                 <span>{lang === "pt" ? "Preço" : "Price"}</span>
                 <strong className="detail-price">{selectedDiscount > 0 && <del>{price(selectedVariant.price, lang)}</del>}{price(selectedPrice, lang)}</strong>
               </div>
-              <p className={selectedSoldOut ? "stock sold" : `stock ${isLowStock(selectedStock) ? "low" : "regular"}`}><span />{selectedSoldOut ? t.soldout : stockStatusLabel(selectedStock, lang)}</p>
+              <p className={selectedSoldOut ? "stock sold" : `stock ${isLowStock(selectedStock) ? "low" : "regular"}`}><span />{product.isGiftCard ? (lang === "pt" ? "Disponível" : "Available") : selectedSoldOut ? t.soldout : stockStatusLabel(selectedStock, lang)}</p>
             </div>
 
             {selectedDiscount > 0 && endsAt && (
@@ -2641,7 +2707,7 @@ function ProductDetail({
               </div>
             )}
 
-            <p className="tax-copy">IVA incluído. Portes calculados no checkout.</p>
+            <p className="tax-copy">{product.isGiftCard ? (lang === "pt" ? "Entrega digital gratuita no perfil após pagamento confirmado." : "Free digital delivery to your profile after confirmed payment.") : "IVA incluído. Portes calculados no checkout."}</p>
 
             <fieldset className="variant-picker">
               <legend>{t.pick}</legend>
@@ -2662,7 +2728,7 @@ function ProductDetail({
                       aria-pressed={active}
                     >
                       <span>{volumeLabel}</span>
-                      <small>{variant.isDecant ? "Decant" : lang === "pt" ? "Frasco completo" : "Full bottle"}</small>
+                      <small>{product.isGiftCard ? (lang === "pt" ? "Gift card digital" : "Digital gift card") : variant.isDecant ? "Decant" : lang === "pt" ? "Frasco completo" : "Full bottle"}</small>
                       <strong>{unavailable ? t.soldout : price(variantPrice, lang)}</strong>
                     </button>
                   );
@@ -2690,7 +2756,7 @@ function ProductDetail({
                 <span>{t.add}</span>
                 <ShoppingBag size={20} />
               </button>
-              <button className={`detail-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}><Heart size={20} fill={isFavorite ? "currentColor" : "none"} /></button>
+              {!product.isGiftCard && <button className={`detail-favorite ${isFavorite ? "saved" : ""}`} onClick={() => onFavorite(product)} aria-label={lang === "pt" ? "Guardar nos favoritos" : "Save to favourites"}><Heart size={20} fill={isFavorite ? "currentColor" : "none"} /></button>}
             </div>
           </div>
 
@@ -2714,7 +2780,7 @@ function ProductDetail({
         </section>
       )}
 
-      <ProductReviews product={product} lang={lang} session={session} orders={orders} onLogin={onLogin} />
+      {!product.isGiftCard && <ProductReviews product={product} lang={lang} session={session} orders={orders} onLogin={onLogin} />}
 
       <section className="related-section">
         <div className="section-head split">
@@ -2904,6 +2970,9 @@ function ProductGallery({ product, lang }: { product: Product; lang: Lang }) {
 }
 
 function ProductVisual({ product, hero = false, compact = false }: { product: Product; hero?: boolean; compact?: boolean }) {
+  if (product.isGiftCard) {
+    return <div className={`visual gift-card-visual ${hero ? "hero-visual" : ""} ${compact ? "compact" : ""}`}><Gift aria-hidden="true" /><Image src="/mystic-essence-hero-logo.png" width={340} height={190} alt="" /><span>GIFT CARD</span><small>30 € · 50 € · 80 € · 100 €</small></div>;
+  }
   const imageUrl = getProductImages(product)[0]?.imageUrl;
   if (imageUrl) {
     return (
@@ -2936,6 +3005,7 @@ function AccountPage({
   orders,
   influencerUses,
   loyaltyHistory,
+  giftCards,
   favoriteFolders,
   setFavoriteFolders,
   onProduct,
@@ -2952,6 +3022,7 @@ function AccountPage({
   orders: Order[];
   influencerUses: InfluencerCouponUse[];
   loyaltyHistory: LoyaltyHistoryEntry[];
+  giftCards: GiftCardBalance[];
   favoriteFolders: FavoriteFolder[];
   setFavoriteFolders: Dispatch<SetStateAction<FavoriteFolder[]>>;
   onProduct: (id: string) => void;
@@ -3138,6 +3209,22 @@ function AccountPage({
             <footer><span>{lang === "pt" ? "Total a acertar este mês" : "Total due this month"}</span><strong>{price(monthCommission, lang)}</strong></footer>
           </section>
         )}
+
+        {!favoritesOnly && <section className="gift-card-wallet account-panel">
+          <header className="loyalty-panel-heading">
+            <div><Gift size={22} /><div><span className="eyebrow">Mystic Gift Cards</span><h2>{lang === "pt" ? "Os teus gift cards" : "Your gift cards"}</h2></div></div>
+            <strong><span>{giftCards.filter((card) => card.status === "active" && card.balance > 0).length}</span> {lang === "pt" ? "disponíveis" : "available"}</strong>
+          </header>
+          {giftCards.length === 0 ? <div className="account-empty-state"><Gift size={24} /><strong>{lang === "pt" ? "Ainda não tens gift cards" : "You do not have gift cards yet"}</strong><p>{lang === "pt" ? "Depois de um pagamento confirmado, o gift card aparece automaticamente aqui." : "After a confirmed payment, the gift card appears here automatically."}</p></div> : <div className="gift-card-wallet-grid">
+            {giftCards.map((card) => <article className={card.status === "active" && card.balance > 0 ? "active" : "used"} key={card.id}>
+              <div><Gift size={19} /><span>{card.status === "active" && card.balance > 0 ? (lang === "pt" ? "Disponível" : "Available") : (lang === "pt" ? "Utilizado" : "Used")}</span></div>
+              <strong>{price(card.balance, lang)}</strong>
+              <code>{card.code}</code>
+              <small>{lang === "pt" ? `Valor inicial ${price(card.originalValue, lang)}` : `Original value ${price(card.originalValue, lang)}`}</small>
+            </article>)}
+          </div>}
+          <footer>{lang === "pt" ? "O saldo pode ser usado total ou parcialmente no checkout e o restante fica guardado." : "The balance can be used fully or partially at checkout and the remainder stays available."}</footer>
+        </section>}
 
         {!favoritesOnly && <section className="loyalty-panel account-panel">
           <header className="loyalty-panel-heading">
@@ -4137,6 +4224,7 @@ function AdminPage({
                       <span>{lang === "pt" ? "Subtotal" : "Subtotal"}<strong>{price(order.subtotal, lang)}</strong></span>
                       {Boolean(order.couponCode && (order.couponDiscountAmount ?? (!order.loyaltyRewardId ? order.discountAmount : 0))) && <span className="admin-order-discount">{lang === "pt" ? `Cupão ${order.couponCode}` : `Coupon ${order.couponCode}`}<strong>-{price(order.couponDiscountAmount ?? order.discountAmount ?? 0, lang)}</strong></span>}
                       {Boolean(order.loyaltyRewardId && order.loyaltyDiscountAmount) && <span className="admin-order-discount">{lang === "pt" ? `Recompensa · ${order.loyaltyPointsSpent} pontos` : `Reward · ${order.loyaltyPointsSpent} points`}<strong>-{price(order.loyaltyDiscountAmount ?? 0, lang)}</strong></span>}
+                      {Boolean(order.giftCardAmountUsed) && <span className="admin-order-discount">Gift card · {order.giftCardCode || order.giftCardId}<strong>-{price(order.giftCardAmountUsed ?? 0, lang)}</strong></span>}
                       <span>{lang === "pt" ? "Envio" : "Shipping"}<strong>{order.shipping === 0 ? (lang === "pt" ? "Grátis" : "Free") : price(order.shipping, lang)}</strong></span>
                     </div>
                   </section>
@@ -4348,6 +4436,7 @@ function CheckoutPage({
   cart,
   coupons,
   session,
+  giftCards,
   preferredRewardId,
   onRewardChange,
   onCheckoutStarted,
@@ -4358,6 +4447,7 @@ function CheckoutPage({
   cart: CartItem[];
   coupons: Coupon[];
   session: Session | null;
+  giftCards: GiftCardBalance[];
   preferredRewardId: string | null;
   onRewardChange: (rewardId: string | null) => void;
   onCheckoutStarted: () => void;
@@ -4385,6 +4475,7 @@ function CheckoutPage({
   const [couponMessage, setCouponMessage] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
   const [campaignRulesOpen, setCampaignRulesOpen] = useState(false);
+  const [selectedGiftCardId, setSelectedGiftCardId] = useState("");
   const campaignRulesCloseRef = useRef<HTMLButtonElement>(null);
   const [shippingZone, setShippingZone] = useState<ShippingZone>("continental");
   const [postalCode, setPostalCode] = useState("");
@@ -4392,16 +4483,22 @@ function CheckoutPage({
   const [carrierSelection, setCarrierSelection] = useState<Partial<Record<ShippingZone, string>>>({});
   const carriers = shippingSettings[shippingZone].carriers;
   const selectedCarrier = carriers.find((carrier) => carrier.id === carrierSelection[shippingZone]) ?? carriers[0];
-  const shippingBlocked = !shippingReady || Boolean(shippingError) || !selectedCarrier || (firebaseEnabled && previewChanged);
+  const hasGiftCardPurchase = cart.some((item) => item.isGiftCard);
+  const hasPhysicalItems = cart.some((item) => !item.isGiftCard);
+  const shippingBlocked = hasPhysicalItems && (!shippingReady || Boolean(shippingError) || !selectedCarrier || (firebaseEnabled && previewChanged));
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const shipping = selectedCarrier && subtotal > 0 ? getShippingCost(subtotal, shippingZone, shippingSettings, selectedCarrier.id) : 0;
+  const eligibleSubtotal = cart.filter((item) => !item.isGiftCard).reduce((sum, item) => sum + item.price * item.qty, 0);
+  const shipping = hasPhysicalItems && selectedCarrier && eligibleSubtotal > 0 ? getShippingCost(eligibleSubtotal, shippingZone, shippingSettings, selectedCarrier.id) : 0;
   const loyaltyPoints = Math.max(0, Math.trunc(session?.loyaltyPoints ?? 0));
   const preferredReward = preferredRewardId ? loyaltyRewardById(preferredRewardId) : null;
-  const selectedReward = preferredReward && loyaltyPoints >= preferredReward.points && (preferredReward.kind !== "fixed" || subtotal >= preferredReward.value) ? preferredReward : null;
-  const couponDiscountAmount = appliedCoupon ? Math.round(subtotal * appliedCoupon.discount) / 100 : 0;
-  const loyaltyDiscountAmount = selectedReward ? loyaltyDiscountForSubtotal(selectedReward, subtotal) : 0;
-  const discountAmount = Math.round(Math.min(subtotal, couponDiscountAmount + loyaltyDiscountAmount) * 100) / 100;
-  const total = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
+  const selectedReward = preferredReward && loyaltyPoints >= preferredReward.points && (preferredReward.kind !== "fixed" || eligibleSubtotal >= preferredReward.value) ? preferredReward : null;
+  const couponDiscountAmount = appliedCoupon ? Math.round(eligibleSubtotal * appliedCoupon.discount) / 100 : 0;
+  const loyaltyDiscountAmount = selectedReward ? loyaltyDiscountForSubtotal(selectedReward, eligibleSubtotal) : 0;
+  const discountAmount = Math.round(Math.min(eligibleSubtotal, couponDiscountAmount + loyaltyDiscountAmount) * 100) / 100;
+  const totalBeforeGiftCard = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
+  const selectedGiftCard = !hasGiftCardPurchase ? giftCards.find((card) => card.id === selectedGiftCardId && card.status === "active" && card.balance > 0) ?? null : null;
+  const giftCardAmount = selectedGiftCard ? Math.round(Math.min(selectedGiftCard.balance, totalBeforeGiftCard) * 100) / 100 : 0;
+  const total = Math.round((totalBeforeGiftCard - giftCardAmount) * 100) / 100;
   const copy = t.checkoutPage;
 
   useEffect(() => {
@@ -4422,6 +4519,10 @@ function CheckoutPage({
   useEffect(() => {
     setPostalCode((current) => formatPostalCodeInput(current, shippingZone));
   }, [shippingZone]);
+
+  useEffect(() => {
+    if (hasGiftCardPurchase || (selectedGiftCardId && !giftCards.some((card) => card.id === selectedGiftCardId && card.status === "active" && card.balance > 0))) setSelectedGiftCardId("");
+  }, [giftCards, hasGiftCardPurchase, selectedGiftCardId]);
 
   async function applyCoupon() {
     const code = couponInput.trim().toUpperCase();
@@ -4452,7 +4553,7 @@ function CheckoutPage({
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (shippingBlocked || decantCheckoutBlocked || !selectedCarrier || checkoutBusy || cart.length === 0) return;
+    if (shippingBlocked || decantCheckoutBlocked || (hasPhysicalItems && !selectedCarrier) || checkoutBusy || cart.length === 0) return;
     const form = new FormData(event.currentTarget);
     const createdAt = new Date().toISOString();
     const customerName = String(form.get("name") ?? "").trim();
@@ -4495,9 +4596,9 @@ function CheckoutPage({
       subtotal,
       shipping,
       shippingZone,
-      shippingCarrierId: selectedCarrier.id,
-      shippingCarrierName: selectedCarrier.name,
-      shippingDescription: selectedCarrier.description,
+      shippingCarrierId: selectedCarrier?.id,
+      shippingCarrierName: selectedCarrier?.name ?? (lang === "pt" ? "Entrega digital" : "Digital delivery"),
+      shippingDescription: selectedCarrier?.description,
       couponCode: appliedCoupon?.code,
       discount: appliedCoupon?.discount,
       couponDiscountAmount,
@@ -4506,6 +4607,9 @@ function CheckoutPage({
       loyaltyPointsSpent: selectedReward?.points,
       loyaltyDiscountAmount,
       loyaltyGift: selectedReward?.gift === true,
+      giftCardId: selectedGiftCard?.id ?? null,
+      giftCardCode: selectedGiftCard?.code ?? null,
+      giftCardAmountUsed: giftCardAmount,
       termsAccepted,
       termsVersion: CHECKOUT_TERMS_VERSION,
       total,
@@ -4523,10 +4627,11 @@ function CheckoutPage({
           customer: order.customer,
           billing: order.billing,
           shippingZone,
-          shippingCarrierId: selectedCarrier.id,
+          shippingCarrierId: selectedCarrier?.id,
           expectedShipping: shipping,
           couponCode: appliedCoupon?.code,
           loyaltyRewardId: selectedReward?.id,
+          giftCardId: selectedGiftCard?.id,
           termsAccepted,
           termsVersion: CHECKOUT_TERMS_VERSION,
           items: cart.map((item) => ({ productId: item.id, volume: item.volume, quantity: item.qty })),
@@ -4569,7 +4674,9 @@ function CheckoutPage({
   }
 
   if (submittedOrder) {
-    const instruction = checkoutResult?.method === "mbway"
+    const instruction = checkoutResult?.method === "gift-card"
+      ? (lang === "pt" ? "O gift card cobriu o total. A encomenda está confirmada e receberá o comprovativo por email." : "The gift card covered the total. Your order is confirmed and you will receive the receipt by email.")
+      : checkoutResult?.method === "mbway"
       ? checkoutResult.message
       : checkoutResult?.method === "multibanco"
         ? (lang === "pt" ? "Use os dados abaixo no Multibanco ou no homebanking. A encomenda será confirmada automaticamente após o pagamento." : "Use the details below at an ATM or in online banking. The order will be confirmed automatically after payment.")
@@ -4579,9 +4686,11 @@ function CheckoutPage({
     return (
       <section className="checkout-success">
         <BadgeCheck size={52} />
-        <span className="eyebrow">IFTHENPAY · Mystic Essence</span>
+        <span className="eyebrow">{checkoutResult?.method === "gift-card" ? "Mystic Gift Card" : "IFTHENPAY · Mystic Essence"}</span>
         <h1>
-          {checkoutResult?.method === "mbway"
+          {checkoutResult?.method === "gift-card"
+            ? (lang === "pt" ? "Encomenda confirmada" : "Order confirmed")
+            : checkoutResult?.method === "mbway"
             ? (lang === "pt" ? "Confirme no MB WAY" : "Confirm in MB WAY")
             : (lang === "pt" ? "Pagamento pendente" : "Payment pending")}
         </h1>
@@ -4637,7 +4746,7 @@ function CheckoutPage({
             </section>
           )}
 
-          <section className="checkout-section">
+          {hasPhysicalItems ? <section className="checkout-section">
             <h2>{copy.deliveryTitle}</h2>
             <div className="form-grid">
               <label className="field full"><span>{copy.address}</span><input name="address" autoComplete="street-address" required /></label>
@@ -4665,13 +4774,13 @@ function CheckoutPage({
                 {carriers.map((carrier) => <label className={`checkout-carrier ${selectedCarrier?.id === carrier.id ? "selected" : ""}`} key={carrier.id}>
                   <input type="radio" name="shippingCarrier" value={carrier.id} checked={selectedCarrier?.id === carrier.id} onChange={() => setCarrierSelection((current) => ({ ...current, [shippingZone]: carrier.id }))} />
                   <span><strong>{carrier.name === "Envio standard" && lang === "en" ? "Standard shipping" : carrier.name}</strong>{carrier.description && <small>{carrier.description}</small>}</span>
-                  <b>{getShippingCost(subtotal, shippingZone, shippingSettings, carrier.id) === 0 ? copy.free : price(carrier.price, lang)}</b>
+                  <b>{getShippingCost(eligibleSubtotal, shippingZone, shippingSettings, carrier.id) === 0 ? copy.free : price(carrier.price, lang)}</b>
                 </label>)}
                 {!selectedCarrier && <p role="status">{lang === "pt" ? "Entregas indisponíveis nesta zona." : "Delivery is unavailable in this zone."}</p>}
               </fieldset>
               <label className="field full"><span>{copy.notes}</span><textarea name="notes" rows={3} /></label>
             </div>
-          </section>
+          </section> : <section className="checkout-section digital-delivery"><Gift size={22} /><div><h2>{lang === "pt" ? "Entrega digital" : "Digital delivery"}</h2><p>{lang === "pt" ? "O gift card será adicionado automaticamente ao seu perfil depois de o pagamento ser confirmado." : "The gift card will be added to your profile automatically after payment is confirmed."}</p></div></section>}
 
           <section className="checkout-section payment-section">
             <h2>{copy.paymentTitle}</h2>
@@ -4749,14 +4858,28 @@ function CheckoutPage({
             </>}
             <button className="loyalty-rules-trigger" type="button" onClick={() => setCampaignRulesOpen(true)}>{lang === "pt" ? "Ver regras da campanha" : "View campaign rules"}</button>
           </section>
+          <section className="checkout-loyalty checkout-gift-card" aria-labelledby="checkout-gift-card-title">
+            <header><div><Gift size={18} /><strong id="checkout-gift-card-title">{lang === "pt" ? "Usar gift card" : "Use gift card"}</strong></div>{session && <span>{giftCards.filter((card) => card.status === "active" && card.balance > 0).length} {lang === "pt" ? "disponíveis" : "available"}</span>}</header>
+            {!session ? <p>{lang === "pt" ? "Inicie sessão para ver os gift cards da sua conta." : "Sign in to see the gift cards in your account."}</p> : hasGiftCardPurchase ? <p>{lang === "pt" ? "Um gift card não pode ser usado para comprar outro gift card." : "A gift card cannot be used to purchase another gift card."}</p> : <>
+              <label className="checkout-loyalty-select" htmlFor="checkout-gift-card">
+                <span>Gift card</span>
+                <select id="checkout-gift-card" value={selectedGiftCard?.id ?? ""} onChange={(event) => setSelectedGiftCardId(event.target.value)}>
+                  <option value="">{lang === "pt" ? "Não usar gift card" : "Do not use a gift card"}</option>
+                  {giftCards.filter((card) => card.status === "active" && card.balance > 0).map((card) => <option value={card.id} key={card.id}>{card.code} — {lang === "pt" ? "saldo" : "balance"} {price(card.balance, lang)}</option>)}
+                </select>
+              </label>
+              {selectedGiftCard ? <p className="checkout-loyalty-selected"><Check size={14} />{lang === "pt" ? `${price(giftCardAmount, lang)} serão usados nesta encomenda.` : `${price(giftCardAmount, lang)} will be used on this order.`}</p> : <p>{giftCards.some((card) => card.status === "active" && card.balance > 0) ? (lang === "pt" ? "Escolha um dos gift cards disponíveis na sua conta." : "Choose one of the gift cards available in your account.") : (lang === "pt" ? "Não tem gift cards com saldo disponível." : "You have no gift cards with available balance.")}</p>}
+            </>}
+          </section>
           <div className="summary-lines">
             <p><span>{t.subtotal}</span><strong>{price(subtotal, lang)}</strong></p>
             {appliedCoupon && <p className="summary-discount"><span>{copy.discount} ({appliedCoupon.code})</span><strong>-{price(couponDiscountAmount, lang)}</strong></p>}
             {selectedReward && <p className="summary-discount"><span>{lang === "pt" ? `Recompensa (${selectedReward.points} pontos)` : `Reward (${selectedReward.points} points)`}</span><strong>-{price(loyaltyDiscountAmount, lang)}</strong></p>}
             {selectedReward?.gift && <p className="summary-loyalty-gift"><span>{lang === "pt" ? "Perfume surpresa" : "Surprise perfume"}</span><strong>{lang === "pt" ? "Oferta" : "Gift"}</strong></p>}
-            <p><span>{copy.shippingZone}</span><strong>{copy.shippingZones[shippingZone]}</strong></p>
-            {selectedCarrier && <p><span>{lang === "pt" ? "Transportadora" : "Carrier"}</span><strong>{selectedCarrier.name}</strong></p>}
-            <p><span>{copy.shipping}</span><strong>{!selectedCarrier ? (lang === "pt" ? "Indisponível" : "Unavailable") : shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
+            {selectedGiftCard && <p className="summary-discount"><span>Gift card ({selectedGiftCard.code})</span><strong>-{price(giftCardAmount, lang)}</strong></p>}
+            <p><span>{copy.shippingZone}</span><strong>{hasPhysicalItems ? copy.shippingZones[shippingZone] : (lang === "pt" ? "Entrega digital" : "Digital delivery")}</strong></p>
+            {hasPhysicalItems && selectedCarrier && <p><span>{lang === "pt" ? "Transportadora" : "Carrier"}</span><strong>{selectedCarrier.name}</strong></p>}
+            <p><span>{copy.shipping}</span><strong>{hasPhysicalItems && !selectedCarrier ? (lang === "pt" ? "Indisponível" : "Unavailable") : shipping === 0 ? copy.free : price(shipping, lang)}</strong></p>
             <p className="summary-total"><span>{copy.total}</span><strong>{price(total, lang)}</strong></p>
           </div>
           <label className="checkout-legal-acceptance">

@@ -4049,6 +4049,62 @@ select {
   }
 }
 
+/* Mystic Gift Cards */
+.gift-card-visual {
+  position: relative;
+  display: grid !important;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  overflow: hidden;
+  border: 1px solid rgba(240, 213, 120, 0.42);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(214, 166, 61, 0.2), transparent 34%),
+    linear-gradient(145deg, #050504, #110d06 62%, #050504);
+  color: var(--gold-2);
+  box-shadow: inset 0 0 0 5px #050504, inset 0 0 0 6px rgba(214, 166, 61, 0.18), 0 18px 45px rgba(0, 0, 0, 0.42);
+}
+
+.gift-card-visual > svg { width: 28px; height: 28px; }
+.gift-card-visual > img { width: min(48%, 180px); height: auto; object-fit: contain; }
+.gift-card-visual > span { font-family: var(--font-display); font-size: clamp(24px, 3vw, 40px); letter-spacing: 0.14em; }
+.gift-card-visual > small { color: var(--cream); font-size: 11px; letter-spacing: 0.12em; }
+.gift-card-visual.compact { min-height: 70px; border-radius: 8px; gap: 3px; }
+.gift-card-visual.compact > svg { width: 14px; height: 14px; }
+.gift-card-visual.compact > img { display: none; }
+.gift-card-visual.compact > span { font-size: 11px; }
+.gift-card-visual.compact > small { display: none; }
+.home-new-media .gift-card-visual { inset: 0 8% 8%; width: 84%; height: 92%; padding: 0; align-content: center; }
+.detail-gallery-frame .gift-card-visual { width: 88%; height: 70%; min-height: 300px; margin: auto; }
+
+.gift-card-wallet {
+  margin-bottom: 24px;
+  padding: 24px;
+  background: radial-gradient(circle at 92% 0%, rgba(221, 169, 66, 0.16), transparent 34%), var(--panel);
+}
+.gift-card-wallet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 22px; }
+.gift-card-wallet-grid article { display: grid; gap: 9px; padding: 18px; border: 1px solid rgba(214, 166, 61, 0.38); background: #070605; }
+.gift-card-wallet-grid article.used { opacity: 0.55; }
+.gift-card-wallet-grid article > div { display: flex; align-items: center; gap: 8px; color: var(--gold-2); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.gift-card-wallet-grid article > strong { color: var(--cream); font-family: var(--font-display); font-size: 30px; font-weight: 400; }
+.gift-card-wallet-grid code { color: var(--gold-2); font-family: ui-monospace, monospace; font-size: 13px; }
+.gift-card-wallet-grid small, .gift-card-wallet > footer { color: var(--muted); font-size: 12px; }
+.gift-card-wallet > footer { margin-top: 18px; line-height: 1.55; }
+.digital-delivery { display: flex; align-items: flex-start; gap: 14px; }
+.digital-delivery > svg { flex: 0 0 auto; color: var(--gold-2); }
+.digital-delivery h2 { margin-top: 0; }
+.digital-delivery p { margin: 5px 0 0; color: var(--muted); line-height: 1.55; }
+
+@media (max-width: 620px) {
+  .gift-card-wallet { padding: 18px; }
+  .gift-card-wallet-grid { grid-template-columns: 1fr; }
+  .home-new-media .gift-card-visual { inset: 0 6% 6%; width: 88%; height: 94%; }
+}
+
 .account-intro h1,
 .customer-account h1,
 .admin-heading h1 {

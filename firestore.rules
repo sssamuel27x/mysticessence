@@ -173,6 +173,16 @@ service cloud.firestore {
         allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
         allow create, update, delete: if false;
       }
+
+      match /giftCards/{giftCardId} {
+        allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+        allow create, update, delete: if false;
+      }
+
+      match /giftCardHistory/{entryId} {
+        allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+        allow create, update, delete: if false;
+      }
     }
 
     match /mail/{mailId} {

@@ -145,7 +145,8 @@ function totalsHtml(order) {
     couponDiscount > 0 ? `<div><span>Desconto (${html(order.couponCode)})</span><strong style="float:right;color:#ddb64e">-${currency.format(couponDiscount)}</strong></div>` : "",
     loyaltyDiscount > 0 ? `<div><span>Recompensa (${html(order.loyaltyPointsSpent)} pontos)</span><strong style="float:right;color:#ddb64e">-${currency.format(loyaltyDiscount)}</strong></div>` : "",
   ].join("") || (discount > 0 ? `<div><span>Desconto</span><strong style="float:right;color:#ddb64e">-${currency.format(discount)}</strong></div>` : "");
-  return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discountRows}<div><span>Zona de entrega</span><strong style="float:right;color:#f5efe3">${html(shippingZones[zone].label)}</strong></div>${order.shippingCarrierName ? `<div><span>Transportadora</span><strong style="float:right;color:#f5efe3">${html(order.shippingCarrierName)}</strong></div>${order.shippingDescription ? `<div>${html(order.shippingDescription)}</div>` : ""}` : ""}<div><span>Envio</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
+  const giftCardRow = Number(order.giftCardAmountUsed || 0) > 0 ? `<div><span>Gift card (${html(order.giftCardCode || order.giftCardId)})</span><strong style="float:right;color:#ddb64e">-${currency.format(order.giftCardAmountUsed)}</strong></div>` : "";
+  return `<div style="margin-top:20px;line-height:1.8;color:#c7beb0"><div><span>Subtotal</span><strong style="float:right;color:#f5efe3">${currency.format(order.subtotal)}</strong></div>${discountRows}${giftCardRow}<div><span>Zona de entrega</span><strong style="float:right;color:#f5efe3">${html(shippingZones[zone].label)}</strong></div>${order.shippingCarrierName ? `<div><span>Transportadora</span><strong style="float:right;color:#f5efe3">${html(order.shippingCarrierName)}</strong></div>${order.shippingDescription ? `<div>${html(order.shippingDescription)}</div>` : ""}` : ""}<div><span>Envio</span><strong style="float:right;color:#f5efe3">${order.shipping === 0 ? "Grátis" : currency.format(order.shipping)}</strong></div><div style="margin-top:8px;padding-top:8px;border-top:1px solid #3b311d;font-size:18px;color:#ddb64e"><span>Total</span><strong style="float:right">${currency.format(order.total)}</strong></div></div>`;
 }
 
 function loyaltyEmailHtml(order, audience) {
@@ -157,6 +158,15 @@ function loyaltyEmailHtml(order, audience) {
     ? "INCLUIR 1 PERFUME SURPRESA DE OFERTA NA ENCOMENDA."
     : "A sua encomenda inclui 1 perfume surpresa de oferta.";
   return `<div style="margin-top:22px;padding:18px;border:${includesGift ? "2px" : "1px"} solid #ddb64e;background:${includesGift ? "#271d06" : "#15120b"};color:#f5efe3"><p style="margin:0 0 10px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>${title}</strong></p><p style="margin:0;line-height:1.7"><strong>Pontos utilizados:</strong> ${html(points)}</p>${includesGift ? `<p style="margin:12px 0 0;color:#f8e8b2;line-height:1.6"><strong>${giftMessage}</strong></p>` : ""}</div>`;
+}
+
+function giftCardEmailHtml(order, audience) {
+  const used = Math.max(0, Number(order.giftCardAmountUsed) || 0);
+  const issued = Array.isArray(order.giftCardsIssued) ? order.giftCardsIssued : [];
+  if (!used && !issued.length) return "";
+  const usedRow = used > 0 ? `<p style="margin:0 0 8px;line-height:1.7"><strong>Gift card utilizado:</strong> ${html(order.giftCardCode || order.giftCardId)} · -${currency.format(used)}</p>` : "";
+  const issuedRows = issued.length ? `<p style="margin:12px 0 6px;line-height:1.7"><strong>${audience === "owner" ? "Gift cards emitidos" : "Os seus gift cards"}:</strong></p>${issued.map((card) => `<p style="margin:4px 0;color:#f8e8b2"><strong>${html(card.code)}</strong> · ${currency.format(card.value)}</p>`).join("")}<p style="margin:10px 0 0;color:#c7beb0;line-height:1.6">${audience === "owner" ? "Foram adicionados à conta do cliente." : "Já estão disponíveis no seu perfil e podem ser usados no checkout."}</p>` : "";
+  return `<div style="margin-top:22px;padding:18px;border:1px solid #ddb64e;background:#15120b;color:#f5efe3"><p style="margin:0 0 10px;color:#ddb64e;font-size:12px;letter-spacing:1.5px;text-transform:uppercase"><strong>Gift cards</strong></p>${usedRow}${issuedRows}</div>`;
 }
 
 function paymentInstructionsHtml(order) {
@@ -208,6 +218,7 @@ function couponPercentage(coupon) {
 async function createOrderRecord(request, paymentMode) {
   const { DEFAULT_SHIPPING_SETTINGS, normalizeShippingSettings, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
   const { loyaltyDiscountForSubtotal, loyaltyPointsForAmount, loyaltyRewardById, normalizeLoyaltyPoints } = await import("./loyalty.mjs");
+  const { GIFT_CARD_PRODUCT_ID, giftCardAmountForTotal, giftCardValueForVolume, normalizeGiftCardBalance } = await import("./gift-cards.mjs");
   const input = request.data || {};
   const CHECKOUT_TERMS_VERSION = await validateTermsAcceptance(input);
   const customer = input.customer || {};
@@ -221,28 +232,33 @@ async function createOrderRecord(request, paymentMode) {
   if (input.shippingZone !== undefined && !Object.prototype.hasOwnProperty.call(shippingZones, input.shippingZone)) {
     throw new HttpsError("invalid-argument", "Zona de entrega inválida.");
   }
-  if (!text(customer.name) || !text(customer.email) || !text(customer.phone) || !text(customer.address) || !text(customer.postal) || !text(customer.city)) {
-    throw new HttpsError("invalid-argument", "Preencha todos os dados de entrega.");
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(customer.email, 180))) throw new HttpsError("invalid-argument", "Indique um email válido.");
-  validateDestination(shippingZone, customer.postal);
-  const sameAsContact = requestedBilling.sameAsContact === true;
-  if (!sameAsContact && (!text(requestedBilling.name) || !text(requestedBilling.address) || !text(requestedBilling.taxId))) {
-    throw new HttpsError("invalid-argument", "Preencha todos os dados de faturação.");
-  }
-
   const normalizedItems = requestedItems.map((requested) => ({
     productId: text(requested.productId, 120).replace(/^decant-/, "").split("--")[0],
     volume: text(requested.volume, 30),
     quantity: Math.min(99, Math.max(1, Math.trunc(Number(requested.quantity) || 1))),
   }));
   if (normalizedItems.some(item => !/^[A-Za-z0-9_-]{1,120}$/.test(item.productId))) throw new HttpsError("invalid-argument", "Produto inválido.");
-  const productIds = [...new Set(normalizedItems.map((item) => item.productId))];
+  const hasGiftCardPurchase = normalizedItems.some((item) => item.productId === GIFT_CARD_PRODUCT_ID);
+  const hasPhysicalItems = normalizedItems.some((item) => item.productId !== GIFT_CARD_PRODUCT_ID);
+  if (hasGiftCardPurchase && !request.auth) throw new HttpsError("unauthenticated", "Inicie sessão para comprar um gift card.");
+  if (!text(customer.name) || !text(customer.email) || !text(customer.phone) || (hasPhysicalItems && (!text(customer.address) || !text(customer.postal) || !text(customer.city)))) {
+    throw new HttpsError("invalid-argument", hasPhysicalItems ? "Preencha todos os dados de entrega." : "Preencha os seus dados de contacto.");
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(customer.email, 180))) throw new HttpsError("invalid-argument", "Indique um email válido.");
+  if (hasPhysicalItems) validateDestination(shippingZone, customer.postal);
+  const sameAsContact = requestedBilling.sameAsContact === true;
+  if (!sameAsContact && (!text(requestedBilling.name) || !text(requestedBilling.address) || !text(requestedBilling.taxId))) {
+    throw new HttpsError("invalid-argument", "Preencha todos os dados de faturação.");
+  }
+  const productIds = [...new Set(normalizedItems.filter((item) => item.productId !== GIFT_CARD_PRODUCT_ID).map((item) => item.productId))];
   const couponCode = text(input.couponCode, 30).toUpperCase();
   const loyaltyRewardId = text(input.loyaltyRewardId, 30);
+  const giftCardId = text(input.giftCardId, 120);
   const loyaltyReward = loyaltyRewardId ? loyaltyRewardById(loyaltyRewardId) : null;
   if (loyaltyRewardId && !loyaltyReward) throw new HttpsError("invalid-argument", "A recompensa selecionada não existe.");
   if (loyaltyReward && !request.auth) throw new HttpsError("unauthenticated", "Inicie sessão para usar os seus pontos.");
+  if (giftCardId && !request.auth) throw new HttpsError("unauthenticated", "Inicie sessão para usar um gift card.");
+  if (giftCardId && hasGiftCardPurchase) throw new HttpsError("invalid-argument", "Não é possível pagar um gift card com outro gift card.");
   const attemptId = text(input.attemptId, 80);
   if (!/^[a-f0-9-]{36}$/.test(attemptId)) throw new HttpsError("invalid-argument", "Atualize a página antes de iniciar o pagamento.");
   const attemptRef = db.collection("checkoutAttempts").doc(hash([request.auth?.uid || "guest", attemptId]));
@@ -270,19 +286,22 @@ async function createOrderRecord(request, paymentMode) {
     if (!shippingSettings) {
       throw new HttpsError("failed-precondition", "Os portes estão indisponíveis. Contacte a loja.");
     }
-    const carrier = getShippingCarrier(shippingZone, shippingSettings, input.shippingCarrierId);
-    if (!carrier) throw new HttpsError("failed-precondition", "A transportadora selecionada já não está disponível nesta zona. Reveja a entrega.");
+    const carrier = hasPhysicalItems ? getShippingCarrier(shippingZone, shippingSettings, input.shippingCarrierId) : null;
+    if (hasPhysicalItems && !carrier) throw new HttpsError("failed-precondition", "A transportadora selecionada já não está disponível nesta zona. Reveja a entrega.");
     const productRefs = productIds.map((id) => db.collection("products").doc(id));
     const decantRefs = productIds.map((id) => db.collection("products").doc(`decant-${id}`));
     const couponRef = couponCode ? db.collection("coupons").doc(couponCode) : null;
     const loyaltyProfileRef = loyaltyReward ? db.collection("profiles").doc(request.auth.uid) : null;
     const loyaltyRedemptionRef = loyaltyReward ? loyaltyProfileRef.collection("loyaltyHistory").doc(`redeem-${orderId}`) : null;
-    const reads = [...productRefs, ...decantRefs, ...(couponRef ? [couponRef] : []), ...(loyaltyProfileRef ? [loyaltyProfileRef] : [])];
+    const giftCardRef = giftCardId ? db.collection("profiles").doc(request.auth.uid).collection("giftCards").doc(giftCardId) : null;
+    const giftCardRedemptionRef = giftCardRef ? db.collection("profiles").doc(request.auth.uid).collection("giftCardHistory").doc(`redeem-${orderId}`) : null;
+    const reads = [...productRefs, ...decantRefs, ...(couponRef ? [couponRef] : []), ...(loyaltyProfileRef ? [loyaltyProfileRef] : []), ...(giftCardRef ? [giftCardRef] : [])];
     const snapshots = await Promise.all(reads.map((ref) => transaction.get(ref)));
     const productSnapshots = snapshots.slice(0, productRefs.length);
     const decantSnapshots = snapshots.slice(productRefs.length, productRefs.length + decantRefs.length);
     const couponSnapshot = couponRef ? snapshots[productRefs.length + decantRefs.length] : null;
-    const loyaltyProfileSnapshot = loyaltyProfileRef ? snapshots[snapshots.length - 1] : null;
+    const loyaltyProfileSnapshot = loyaltyProfileRef ? snapshots[productRefs.length + decantRefs.length + (couponRef ? 1 : 0)] : null;
+    const giftCardSnapshot = giftCardRef ? snapshots[snapshots.length - 1] : null;
     const products = new Map();
 
     productSnapshots.forEach((snapshot, index) => {
@@ -303,6 +322,22 @@ async function createOrderRecord(request, paymentMode) {
     });
 
     const items = normalizedItems.map((requested) => {
+      if (requested.productId === GIFT_CARD_PRODUCT_ID) {
+        const value = giftCardValueForVolume(requested.volume);
+        if (!value) throw new HttpsError("invalid-argument", "Escolha um valor de gift card válido.");
+        return {
+          id: `${GIFT_CARD_PRODUCT_ID}--${value}-eur`,
+          productId: GIFT_CARD_PRODUCT_ID,
+          name: { pt: "Gift Card", en: "Gift Card" },
+          brand: "Mystic Essence",
+          volume: `${value} €`,
+          isGiftCard: true,
+          qty: requested.quantity,
+          price: value,
+          lineTotal: Math.round(value * requested.quantity * 100) / 100,
+          imageUrl: null,
+        };
+      }
       const product = products.get(requested.productId);
       const variant = (product.variants || []).find((entry) => entry.volume === requested.volume);
       const productName = product.name?.pt || product.name || requested.productId;
@@ -336,7 +371,8 @@ async function createOrderRecord(request, paymentMode) {
     });
 
     const subtotal = Math.round(items.reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
-    const shipping = getShippingCost(subtotal, shippingZone, shippingSettings, carrier.id);
+    const eligibleSubtotal = Math.round(items.filter((item) => !item.isGiftCard).reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
+    const shipping = hasPhysicalItems ? getShippingCost(eligibleSubtotal, shippingZone, shippingSettings, carrier.id) : 0;
     // Reject an outdated quote before reserving stock or starting a payment.
     if (input.expectedShipping !== undefined && input.expectedShipping !== shipping) {
       throw new HttpsError("failed-precondition", "Os portes foram atualizados. Reveja o total antes de confirmar a encomenda.");
@@ -348,11 +384,11 @@ async function createOrderRecord(request, paymentMode) {
       if (!loyaltyProfileSnapshot?.exists) throw new HttpsError("failed-precondition", "O perfil da sua conta ainda não está disponível.");
       const loyaltyPoints = normalizeLoyaltyPoints(loyaltyProfileSnapshot.data().loyaltyPoints);
       if (loyaltyPoints < loyaltyReward.points) throw new HttpsError("failed-precondition", "Já não tem pontos suficientes para esta recompensa.");
-      if (loyaltyReward.kind === "fixed" && subtotal < loyaltyReward.value) {
+      if (loyaltyReward.kind === "fixed" && eligibleSubtotal < loyaltyReward.value) {
         throw new HttpsError("failed-precondition", "O valor dos produtos é inferior ao desconto desta recompensa.");
       }
       loyaltyPointsSpent = loyaltyReward.points;
-      loyaltyDiscountAmount = loyaltyDiscountForSubtotal(loyaltyReward, subtotal);
+      loyaltyDiscountAmount = loyaltyDiscountForSubtotal(loyaltyReward, eligibleSubtotal);
     }
 
     const reservedDecantStock = decantStockUsage(items);
@@ -397,9 +433,21 @@ async function createOrderRecord(request, paymentMode) {
       transaction.update(decantStockRef, { quantities: nextSharedDecantStock, updatedAt: now });
     }
 
-    const couponDiscountAmount = Math.round(subtotal * couponDiscount) / 100;
-    const discountAmount = Math.round(Math.min(subtotal, couponDiscountAmount + loyaltyDiscountAmount) * 100) / 100;
-    const total = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
+    const couponDiscountAmount = Math.round(eligibleSubtotal * couponDiscount) / 100;
+    const discountAmount = Math.round(Math.min(eligibleSubtotal, couponDiscountAmount + loyaltyDiscountAmount) * 100) / 100;
+    const totalBeforeGiftCard = Math.round((subtotal - discountAmount + shipping) * 100) / 100;
+    let giftCardAmountUsed = 0;
+    let giftCardBalance = 0;
+    let giftCardCode = null;
+    if (giftCardRef) {
+      if (!giftCardSnapshot?.exists) throw new HttpsError("failed-precondition", "Este gift card já não está disponível.");
+      const storedGiftCard = giftCardSnapshot.data();
+      giftCardBalance = normalizeGiftCardBalance(storedGiftCard.balance);
+      if (storedGiftCard.status !== "active" || giftCardBalance <= 0) throw new HttpsError("failed-precondition", "Este gift card já não tem saldo disponível.");
+      giftCardCode = text(storedGiftCard.code, 40);
+      giftCardAmountUsed = giftCardAmountForTotal(giftCardBalance, totalBeforeGiftCard);
+    }
+    const total = Math.round((totalBeforeGiftCard - giftCardAmountUsed) * 100) / 100;
     const orderItems = loyaltyReward?.gift ? [...items, {
       id: "loyalty-surprise-perfume",
       productId: null,
@@ -429,9 +477,9 @@ async function createOrderRecord(request, paymentMode) {
       subtotal,
       shipping,
       shippingZone,
-      shippingCarrierId: carrier.id,
-      shippingCarrierName: carrier.name,
-      shippingDescription: carrier.description,
+      shippingCarrierId: carrier?.id || null,
+      shippingCarrierName: carrier?.name || (hasPhysicalItems ? null : "Entrega digital"),
+      shippingDescription: carrier?.description || (hasPhysicalItems ? null : "Disponível na conta após confirmação do pagamento."),
       couponCode: couponCode || null,
       influencerUid: couponSnapshot?.data()?.influencerUid || null,
       discount: couponDiscount,
@@ -441,7 +489,10 @@ async function createOrderRecord(request, paymentMode) {
       loyaltyPointsSpent,
       loyaltyDiscountAmount,
       loyaltyGift: loyaltyReward?.gift === true,
-      loyaltyPointsToEarn: request.auth ? loyaltyPointsForAmount(subtotal - discountAmount) : 0,
+      loyaltyPointsToEarn: request.auth ? loyaltyPointsForAmount(eligibleSubtotal - discountAmount) : 0,
+      giftCardId: giftCardId || null,
+      giftCardCode,
+      giftCardAmountUsed,
       decantStockReserved: nextSharedDecantStock ? reservedDecantStock : null,
       decantStockReservationVersion: nextSharedDecantStock ? 1 : null,
       termsAccepted: true,
@@ -449,11 +500,15 @@ async function createOrderRecord(request, paymentMode) {
       termsAcceptedAt: now,
       total,
       payment: paymentMode === "ifthenpay" ? "ifthenpay" : text(input.paymentMethod, 30) || "pending",
-      paymentMethod: text(input.paymentMethod, 30) || "gateway",
-      paymentStatus: "pending",
+      paymentMethod: total === 0 && giftCardAmountUsed > 0 ? "gift-card" : text(input.paymentMethod, 30) || "gateway",
+      paymentStatus: total === 0 && giftCardAmountUsed > 0 ? "paid" : "pending",
       inventoryReservationVersion: 2,
-      nextReconcileAt: new Date(Date.now() + 5 * 60000).toISOString(),
-      paymentInitiated: paymentMode !== "ifthenpay",
+      ...(total > 0 ? { nextReconcileAt: new Date(Date.now() + 5 * 60000).toISOString() } : {}),
+      paymentInitiated: total === 0 || paymentMode !== "ifthenpay",
+      ...(total === 0 && giftCardAmountUsed > 0 ? {
+        paidAt: now,
+        checkoutResult: { orderId, amount: 0, paymentStatus: "paid", method: "gift-card", message: "Gift card aplicado. A encomenda está confirmada." },
+      } : {}),
       checkoutMode: paymentMode,
       status: "received",
       archived: false,
@@ -472,6 +527,20 @@ async function createOrderRecord(request, paymentMode) {
         rewardId: loyaltyReward.id,
         discountAmount: loyaltyDiscountAmount,
         gift: loyaltyReward.gift === true,
+        createdAt: now,
+      });
+    }
+    if (giftCardRef && giftCardRedemptionRef) {
+      const remainingBalance = Math.round((giftCardBalance - giftCardAmountUsed) * 100) / 100;
+      transaction.update(giftCardRef, { balance: remainingBalance, status: remainingBalance > 0 ? "active" : "used", updatedAt: now });
+      transaction.create(giftCardRedemptionRef, {
+        customerUid: request.auth.uid,
+        orderId,
+        giftCardId,
+        code: giftCardCode,
+        kind: "redeem",
+        status: total === 0 ? "completed" : "reserved",
+        amount: -giftCardAmountUsed,
         createdAt: now,
       });
     }
@@ -497,7 +566,7 @@ async function restoreReservedInventory(orderId, order, evidence) {
   if (!evidence) throw new Error("Provider cancellation evidence required");
   const requestedByProduct = new Map();
   (order.items || []).forEach((item) => {
-    if (item.loyaltyGift) return;
+    if (item.loyaltyGift || item.isGiftCard) return;
     const productId = text(item.productId || item.id, 120).replace(/^decant-/, "").split("--")[0];
     if (!productId) return;
     if (!requestedByProduct.has(productId)) requestedByProduct.set(productId, new Map());
@@ -526,6 +595,12 @@ async function restoreReservedInventory(orderId, order, evidence) {
     const loyaltyProfileRef = loyaltyPointsSpent && freshOrder.customerUid ? db.collection("profiles").doc(freshOrder.customerUid) : null;
     const loyaltyRedemptionRef = loyaltyProfileRef ? loyaltyProfileRef.collection("loyaltyHistory").doc(`redeem-${orderId}`) : null;
     const loyaltyReleaseRef = loyaltyProfileRef ? loyaltyProfileRef.collection("loyaltyHistory").doc(`release-${orderId}`) : null;
+    const giftCardAmountUsed = Math.max(0, Number(freshOrder.giftCardAmountUsed) || 0);
+    const giftCardRef = giftCardAmountUsed && freshOrder.customerUid && freshOrder.giftCardId
+      ? db.collection("profiles").doc(freshOrder.customerUid).collection("giftCards").doc(freshOrder.giftCardId)
+      : null;
+    const giftCardRedemptionRef = giftCardRef ? db.collection("profiles").doc(freshOrder.customerUid).collection("giftCardHistory").doc(`redeem-${orderId}`) : null;
+    const giftCardReleaseRef = giftCardRef ? db.collection("profiles").doc(freshOrder.customerUid).collection("giftCardHistory").doc(`release-${orderId}`) : null;
     const inventoryRefs = productsToRestore.flatMap((entry) => [
       entry.productRef,
       entry.decantRef,
@@ -535,12 +610,16 @@ async function restoreReservedInventory(orderId, order, evidence) {
         ? [loyaltyProfileRef, loyaltyRedemptionRef, loyaltyReleaseRef]
         : []
     );
-    const allSnapshots = await Promise.all([...inventoryRefs, ...loyaltyRefs, ...(decantStockRef ? [decantStockRef] : [])].map((ref) => transaction.get(ref)));
+    const giftCardRefs = giftCardRef && giftCardRedemptionRef && giftCardReleaseRef ? [giftCardRef, giftCardRedemptionRef, giftCardReleaseRef] : [];
+    const allSnapshots = await Promise.all([...inventoryRefs, ...loyaltyRefs, ...giftCardRefs, ...(decantStockRef ? [decantStockRef] : [])].map((ref) => transaction.get(ref)));
     const inventorySnapshots = allSnapshots.slice(0, inventoryRefs.length);
     const loyaltyProfileSnapshot = loyaltyProfileRef ? allSnapshots[inventoryRefs.length] : null;
     const loyaltyRedemptionSnapshot = loyaltyRedemptionRef ? allSnapshots[inventoryRefs.length + 1] : null;
     const loyaltyReleaseSnapshot = loyaltyReleaseRef ? allSnapshots[inventoryRefs.length + 2] : null;
-    const decantStockSnapshot = decantStockRef ? allSnapshots[inventoryRefs.length + loyaltyRefs.length] : null;
+    const giftCardSnapshot = giftCardRef ? allSnapshots[inventoryRefs.length + loyaltyRefs.length] : null;
+    const giftCardRedemptionSnapshot = giftCardRedemptionRef ? allSnapshots[inventoryRefs.length + loyaltyRefs.length + 1] : null;
+    const giftCardReleaseSnapshot = giftCardReleaseRef ? allSnapshots[inventoryRefs.length + loyaltyRefs.length + 2] : null;
+    const decantStockSnapshot = decantStockRef ? allSnapshots[inventoryRefs.length + loyaltyRefs.length + giftCardRefs.length] : null;
 
     productsToRestore.forEach(({ requestedVariants, productRef, decantRef }, index) => {
       const productSnapshot = inventorySnapshots[index * 2];
@@ -589,6 +668,23 @@ async function restoreReservedInventory(orderId, order, evidence) {
         status: "completed",
         points: loyaltyPointsSpent,
         rewardId: freshOrder.loyaltyRewardId || null,
+        createdAt: now,
+      });
+    }
+
+    if (giftCardRef && giftCardRedemptionRef && giftCardReleaseRef && !giftCardReleaseSnapshot?.exists) {
+      const now = new Date().toISOString();
+      const restoredBalance = Math.round((Math.max(0, Number(giftCardSnapshot?.data()?.balance) || 0) + giftCardAmountUsed) * 100) / 100;
+      transaction.set(giftCardRef, { balance: restoredBalance, status: "active", updatedAt: now }, { merge: true });
+      if (giftCardRedemptionSnapshot?.exists) transaction.update(giftCardRedemptionRef, { status: "released", releasedAt: now });
+      transaction.create(giftCardReleaseRef, {
+        customerUid: freshOrder.customerUid,
+        orderId,
+        giftCardId: freshOrder.giftCardId,
+        code: freshOrder.giftCardCode || null,
+        kind: "release",
+        status: "completed",
+        amount: giftCardAmountUsed,
         createdAt: now,
       });
     }
@@ -917,10 +1013,12 @@ exports.createCheckout = onCall({
   await rateLimit(db, request, "checkout", [`email:${text(request.data?.customer?.email, 180).toLowerCase()}`, `phone:${text(request.data?.customer?.phone, 40).replace(/\D/g, "").slice(-9)}`]);
   const { input, orderId, order, total, replay } = await createOrderRecord(request, "ifthenpay");
   if (replay) {
+    if (order.paymentStatus === "paid" && order.checkoutResult?.method === "gift-card") return order.checkoutResult;
     if (order.paymentStatus === "paid") throw new HttpsError("already-exists", "Este pagamento já foi confirmado. Consulte a sua conta.");
     if (order.checkoutResult && order.paymentStatus === "pending") return order.checkoutResult;
     throw new HttpsError("failed-precondition", "O pedido já existe e está a ser verificado. Não repita o pagamento; contacte a loja.");
   }
+  if (order.paymentStatus === "paid" && order.checkoutResult?.method === "gift-card") return order.checkoutResult;
   const formattedAmount = amount(total);
   const language = input.lang === "en" ? "en" : "pt";
   const baseUrl = publicSiteUrl.value().replace(/\/$/, "");
@@ -1136,12 +1234,54 @@ async function recordLoyaltyPayment(orderId) {
   });
 }
 
+async function recordGiftCardPayment(orderId) {
+  const { GIFT_CARD_PRODUCT_ID, giftCardValueForVolume } = await import("./gift-cards.mjs");
+  const orderRef = db.collection("orders").doc(orderId);
+  await db.runTransaction(async transaction => {
+    const orderSnapshot = await transaction.get(orderRef);
+    if (!orderSnapshot.exists) return;
+    const order = orderSnapshot.data();
+    if (order.paymentStatus !== "paid" || !order.customerUid) return;
+    const purchased = (order.items || []).flatMap((item, itemIndex) => {
+      if (item.productId !== GIFT_CARD_PRODUCT_ID && !item.isGiftCard) return [];
+      const value = giftCardValueForVolume(item.volume) || Number(item.price);
+      if (![30, 50, 80, 100].includes(value)) return [];
+      return Array.from({ length: Math.max(1, Math.trunc(Number(item.qty) || 1)) }, (_, copyIndex) => ({ value, itemIndex, copyIndex }));
+    });
+    const profileRef = db.collection("profiles").doc(order.customerUid);
+    const cardEntries = purchased.map(({ value, itemIndex, copyIndex }, index) => {
+      const id = `gift-${orderId}-${itemIndex + 1}-${copyIndex + 1}`;
+      return { id, value, code: `MEGC-${orderId.slice(-6)}-${String(index + 1).padStart(2, "0")}`, ref: profileRef.collection("giftCards").doc(id) };
+    });
+    const snapshots = await Promise.all(cardEntries.map((entry) => transaction.get(entry.ref)));
+    const redemptionRef = order.giftCardAmountUsed ? profileRef.collection("giftCardHistory").doc(`redeem-${orderId}`) : null;
+    const redemptionSnapshot = redemptionRef ? await transaction.get(redemptionRef) : null;
+    const now = order.paidAt || new Date().toISOString();
+    cardEntries.forEach((entry, index) => {
+      if (snapshots[index].exists) return;
+      transaction.create(entry.ref, {
+        ownerUid: order.customerUid,
+        code: entry.code,
+        originalValue: entry.value,
+        balance: entry.value,
+        status: "active",
+        sourceOrderId: orderId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    if (redemptionRef && redemptionSnapshot?.exists && redemptionSnapshot.data().status === "reserved") transaction.update(redemptionRef, { status: "completed", completedAt: now });
+    const issued = cardEntries.map(({ id, code, value }) => ({ id, code, value }));
+    if (purchased.length || order.giftCardAmountUsed) transaction.update(orderRef, { giftCardsIssued: issued, giftCardsProcessedAt: now });
+  });
+}
+
 async function queuePaidOrderEmails(order, orderId) {
   const address = `${html(order.customer.address)}, ${html(order.customer.postal)} ${html(order.customer.city)}`;
   const shippingZone = normalizeShippingZone(order.shippingZone);
   const couponDiscountAmount = Number(order.couponDiscountAmount ?? (!order.loyaltyRewardId ? order.discountAmount : 0));
-  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${loyaltyEmailHtml(order, "owner")}${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(couponDiscountAmount)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
-  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${loyaltyEmailHtml(order, "customer")}${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando a encomenda for enviada.</p>`);
+  const ownerBody = emailFrame(`Nova encomenda paga ${html(orderId)}`, "O pagamento foi confirmado e a encomenda está pronta para ser preparada.", `${loyaltyEmailHtml(order, "owner")}${giftCardEmailHtml(order, "owner")}${itemsHtml(order.items)}${totalsHtml(order)}<p style="line-height:1.7"><strong>Cliente:</strong> ${html(order.customer.name)}<br><strong>Email:</strong> ${html(order.customer.email)}<br><strong>Telefone:</strong> ${html(order.customer.phone)}<br><strong>NIF de contacto:</strong> ${html(order.customer.taxId || "Não indicado")}<br><strong>Morada de entrega:</strong> ${address}<br><strong>Zona de entrega:</strong> ${html(shippingZones[shippingZone].label)}<br><strong>Código promocional:</strong> ${html(order.couponCode || "Não utilizado")}<br><strong>Desconto do cupão:</strong> ${order.discount ? `${html(order.discount)}% (${currency.format(couponDiscountAmount)})` : "Sem desconto"}<br><strong>Notas:</strong> ${html(order.customer.notes || "Sem notas")}<br><strong>Pagamento confirmado:</strong> ${html(order.paymentMethod)}</p>${billingHtml(order)}`);
+  const customerBody = emailFrame(`Encomenda ${html(orderId)} confirmada`, `Olá ${html(order.customer.name)}, recebemos o seu pagamento e a sua encomenda está confirmada.`, `${loyaltyEmailHtml(order, "customer")}${giftCardEmailHtml(order, "customer")}${itemsHtml(order.items)}${totalsHtml(order)}${billingHtml(order)}<p style="color:#c7beb0;line-height:1.6">Enviaremos uma nova atualização quando a encomenda for enviada.</p>`);
 
   await Promise.all([
     queueEmail(ownerEmail.value(), `Nova encomenda paga ${orderId} · Mystic Essence`, ownerBody, `order-${orderId}-owner-paid`),
@@ -1155,7 +1295,8 @@ exports.notifyOwnerOfOrder = onDocumentCreated({ document: "orders/{orderId}", r
   if (order.paymentStatus !== "paid") return;
   await recordInfluencerCouponUse(order, orderId);
   await recordLoyaltyPayment(orderId);
-  await queuePaidOrderEmails(order, orderId);
+  await recordGiftCardPayment(orderId);
+  await queuePaidOrderEmails((await event.data.ref.get()).data(), orderId);
   await event.data.ref.update({ ownerOrderEmailQueuedAt: FieldValue.serverTimestamp(), confirmationEmailSentAt: FieldValue.serverTimestamp() });
 });
 
@@ -1169,7 +1310,8 @@ exports.notifyCustomerOfPayment = onDocumentUpdated({ document: "orders/{orderId
   if (before.paymentStatus !== "paid" && order.paymentStatus === "paid" && !order.confirmationEmailSentAt) {
     await recordInfluencerCouponUse(order, event.params.orderId);
     await recordLoyaltyPayment(event.params.orderId);
-    await queuePaidOrderEmails(order, event.params.orderId);
+    await recordGiftCardPayment(event.params.orderId);
+    await queuePaidOrderEmails((await event.data.after.ref.get()).data(), event.params.orderId);
     await event.data.after.ref.update({ confirmationEmailSentAt: FieldValue.serverTimestamp(), ownerOrderEmailQueuedAt: FieldValue.serverTimestamp() });
   }
 
