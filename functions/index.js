@@ -123,9 +123,23 @@ async function ifthenpayRequest(url, payload) {
   return data;
 }
 
-function assertIfthenpayStatus(data, expectedField, expectedValue) {
-  if (String(data?.[expectedField] ?? "") !== expectedValue) {
-    throw new Error("Resposta IFTHENPAY não confirmada.");
+class PaymentRejectedError extends Error {
+  constructor(message, providerCode, providerMessage) {
+    super(message);
+    this.name = "PaymentRejectedError";
+    this.providerCode = text(providerCode, 20);
+    this.providerMessage = text(providerMessage, 180);
+  }
+}
+
+function assertIfthenpayStatus(data, expectedField, expectedValue, rejectionMessage) {
+  const providerCode = String(data?.[expectedField] ?? "");
+  if (providerCode !== expectedValue) {
+    throw new PaymentRejectedError(
+      rejectionMessage,
+      providerCode,
+      data?.Message || data?.message || data?.MsgDescricao || data?.Description,
+    );
   }
 }
 
@@ -1047,7 +1061,7 @@ exports.createCheckout = onCall({
         description: `Mystic Essence ${orderId}`,
         expiryDays: 3,
       });
-      assertIfthenpayStatus(data, "Status", "0");
+      assertIfthenpayStatus(data, "Status", "0", "Não foi possível criar a referência Multibanco. Confirme os dados ou escolha outro método de pagamento.");
       payment = {
         method: paymentMethod,
         entity: text(data.Entity, 20),
@@ -1064,7 +1078,7 @@ exports.createCheckout = onCall({
         email: order.customer.email,
         description: `Mystic Essence ${orderId}`,
       });
-      assertIfthenpayStatus(data, "Status", "000");
+      assertIfthenpayStatus(data, "Status", "000", "O MB WAY não aceitou o pedido. Confirme se o número indicado está associado ao MB WAY ou escolha outro método de pagamento.");
       payment = {
         method: paymentMethod,
         requestId: text(data.RequestId, 200),
@@ -1079,7 +1093,7 @@ exports.createCheckout = onCall({
         valor: formattedAmount,
         validade: expiryDate(3),
       });
-      assertIfthenpayStatus(data, "Code", "0");
+      assertIfthenpayStatus(data, "Code", "0", "Não foi possível criar a referência Payshop. Confirme os dados ou escolha outro método de pagamento.");
       payment = {
         method: paymentMethod,
         reference: text(data.Reference, 30),
@@ -1095,7 +1109,7 @@ exports.createCheckout = onCall({
         cancelUrl: `${baseUrl}/checkout?payment=cancelled&order=${encodeURIComponent(orderId)}`,
         language,
       });
-      assertIfthenpayStatus(data, "Status", "0");
+      assertIfthenpayStatus(data, "Status", "0", "Não foi possível abrir o pagamento por cartão. Escolha outro método de pagamento ou tente novamente.");
       payment = {
         method: paymentMethod,
         paymentUrl: text(data.PaymentUrl, 2000),
@@ -1123,6 +1137,33 @@ exports.createCheckout = onCall({
     });
     return { orderId, amount: total, paymentStatus: "pending", ...payment };
   } catch (error) {
+    // A structured non-success response means the provider explicitly rejected
+    // the initiation. No payment request exists, so the reservation can be
+    // released immediately and the customer may safely correct the data/retry.
+    if (error instanceof PaymentRejectedError) {
+      let reservationReleased = false;
+      try {
+        await restoreReservedInventory(orderId, order, {
+          source: "ifthenpay-initiation-rejected",
+          method: paymentMethod,
+          status: error.providerCode || null,
+          message: error.providerMessage || null,
+          checkedAt: new Date().toISOString(),
+        });
+        reservationReleased = true;
+      } catch {
+        console.error("Could not release rejected payment reservation", { orderId, paymentMethod });
+      }
+      if (reservationReleased) {
+        console.warn("IFTHENPAY payment initiation rejected", {
+          orderId,
+          paymentMethod,
+          providerCode: error.providerCode || "missing",
+          providerMessage: error.providerMessage || "missing",
+        });
+        throw new HttpsError("failed-precondition", error.message);
+      }
+    }
     // A timeout, invalid response or database failure does not prove that no payment exists.
     await db.runTransaction(async transaction => {
       const ref = db.collection("orders").doc(orderId);

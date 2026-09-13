@@ -4491,6 +4491,7 @@ function CheckoutPage({
   });
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
+  const [checkoutRetryBlocked, setCheckoutRetryBlocked] = useState(false);
   const { blockedSizes, ready: decantsReady, error: decantsError } = useDecantAvailability();
   const cartDecants = cart.map((item) => item.variants.find((variant) => variant.volume === item.volume)).filter((variant) => variant?.isDecant);
   const blockedDecantInCart = cartDecants.some((variant) => isDecantBlocked(variant, blockedSizes));
@@ -4649,6 +4650,7 @@ function CheckoutPage({
     };
     setCheckoutBusy(true);
     setCheckoutError("");
+    setCheckoutRetryBlocked(false);
     try {
       if (firebaseEnabled && paymentsEnabled) {
         const payload = {
@@ -4681,7 +4683,10 @@ function CheckoutPage({
       }
       throw new Error(lang === "pt" ? "Os pagamentos não estão disponíveis. Nenhuma encomenda foi criada." : "Payments are unavailable. No order was created.");
     } catch (error) {
-      setCheckoutError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível iniciar o pagamento." : "Could not start payment."));
+      const code = (error as { code?: string }).code || "";
+      const message = error instanceof Error ? error.message.replace(/\s*\[503\]\s*$/, "") : (lang === "pt" ? "Não foi possível iniciar o pagamento." : "Could not start payment.");
+      setCheckoutRetryBlocked(["functions/unavailable", "functions/internal", "functions/deadline-exceeded", "functions/unknown"].includes(code) || /por verificar/i.test(message));
+      setCheckoutError(message);
     } finally {
       setCheckoutBusy(false);
     }
@@ -4936,7 +4941,7 @@ function CheckoutPage({
           {decantCheckoutBlocked && <p className="auth-error" role="alert">{blockedDecantInCart ? (lang === "pt" ? "Um tamanho de decant no carrinho está esgotado. Retire-o antes de continuar." : "A decant size in your cart is sold out. Remove it before continuing.") : (lang === "pt" ? "A aguardar confirmação da disponibilidade dos decants." : "Waiting for decant availability confirmation.")}</p>}
           {shippingError && !storePickupSelected && <p className="auth-error" role="alert">{shippingError}</p>}
           {firebaseEnabled && previewChanged && !storePickupSelected && <p className="shipping-settings-notice" role="status">{lang === "pt" ? "Portes em teste local. Para evitar cobranças com valores diferentes, o pagamento fica indisponível até publicar estas configurações no servidor." : "Shipping rates are in local preview. Payment is unavailable until these settings are published to the server, to prevent a different charge."}</p>}
-          <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy || shippingBlocked || decantCheckoutBlocked}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
+          <button className="primary-button checkout-submit" type="submit" disabled={cart.length === 0 || checkoutBusy || checkoutRetryBlocked || shippingBlocked || decantCheckoutBlocked}>{checkoutBusy ? (paymentsEnabled ? (lang === "pt" ? "A abrir pagamento..." : "Opening payment...") : (lang === "pt" ? "A confirmar pedido..." : "Confirming order...")) : copy.confirm}</button>
           <p className="secure-note"><LockKeyhole size={14} />{copy.secure}</p>
         </aside>
       </form>

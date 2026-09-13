@@ -629,7 +629,14 @@ export async function createCheckout(payload: Record<string, unknown>) {
   const callable = httpsCallable<Record<string, unknown>, IfthenpayCheckoutResult>(functions, "createCheckout");
   const fingerprint = JSON.stringify([auth?.currentUser?.uid, payload]);
   if (checkoutAttempt?.fingerprint !== fingerprint) checkoutAttempt = { fingerprint, id: crypto.randomUUID() };
-  return (await callable({ ...payload, attemptId: checkoutAttempt.id })).data;
+  try {
+    return (await callable({ ...payload, attemptId: checkoutAttempt.id })).data;
+  } catch (error) {
+    const code = (error as { code?: string }).code || "";
+    const outcomeIsAmbiguous = ["functions/unavailable", "functions/internal", "functions/deadline-exceeded", "functions/unknown"].includes(code);
+    if (!outcomeIsAmbiguous) checkoutAttempt = undefined;
+    throw error;
+  }
 }
 
 let checkoutAttempt: { fingerprint: string; id: string } | undefined;

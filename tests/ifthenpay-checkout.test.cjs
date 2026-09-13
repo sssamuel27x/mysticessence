@@ -248,6 +248,20 @@ test("ambiguous provider failure keeps stock reserved for reconciliation", async
   assert.equal(order.inventoryRestoredAt, undefined);
 });
 
+test("explicit MB WAY rejection restores stock and allows a corrected retry", async (t) => {
+  const state = setup(t, { Status: "113", Message: "Mobile number not found" });
+  await assert.rejects(createCheckout.run(checkoutRequest("912345678")), (error) => {
+    assert.equal(error.code, "failed-precondition");
+    assert.match(error.message, /MB WAY não aceitou/);
+    return true;
+  });
+  assert.equal(state.documents.get("products/test-perfume").variants[0].stock, 5);
+  const order = [...state.documents.entries()].find(([key]) => key.startsWith("orders/"))[1];
+  assert.equal(order.paymentStatus, "failed");
+  assert.equal(order.reconciliationRequired, false);
+  assert.match(order.inventoryRestoredAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
 test("structured validation errors are not disguised as service outages", async (t) => {
   const state = setup(t, new HttpsError("invalid-argument", "Invalid payment details"));
   await assert.rejects(createCheckout.run(checkoutRequest("912345678")), { code: "invalid-argument" });
