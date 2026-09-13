@@ -169,6 +169,11 @@ test('reviews require the buyer, confirmed payment and delivery; invalid ratings
   assert.equal((await db.doc(`reviews/${result.reviewId}`).get()).data().verifiedPurchase, true);
   assert.equal((await db.doc(`reviews/${result.reviewId}`).get()).data().comment, input.data.comment);
   await assert.rejects(f.submitReview.run({ ...input, auth: { uid: 'other-buyer', token: {} } }), { code: 'permission-denied' });
+
+  const permittedBuyer = { uid: 'manual-review-buyer', token: { email: 'manual-review@example.invalid' } };
+  await db.doc(`profiles/${permittedBuyer.uid}`).set({ email: permittedBuyer.token.email, reviewProductIds: ['backend-audit'] });
+  const permittedResult = await f.submitReview.run({ ...input, auth: permittedBuyer });
+  assert.equal((await db.doc(`reviews/${permittedResult.reviewId}`).get()).data().verifiedPurchase, true);
 });
 test('influencer assignment and paid-only commission persist; duplicate events cannot duplicate email records', async (t) => {
   await seed(); provider(t);

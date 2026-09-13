@@ -94,6 +94,7 @@ export type FirebaseSession = {
   influencerCouponCode?: string | null;
   loyaltyPoints?: number;
   loyaltyLifetimePoints?: number;
+  reviewProductIds?: string[];
 };
 
 async function sessionFromUser(user: User): Promise<FirebaseSession> {
@@ -154,6 +155,9 @@ export function watchSession(
       const profile = snapshot.data();
       const loyaltyPoints = Number(profile?.loyaltyPoints);
       const loyaltyLifetimePoints = Number(profile?.loyaltyLifetimePoints);
+      const reviewProductIds = Array.isArray(profile?.reviewProductIds)
+        ? profile.reviewProductIds.filter((productId): productId is string => typeof productId === "string").slice(0, 100)
+        : [];
       callback({
         ...baseSession,
         name: typeof profile?.name === "string" && profile.name.trim() ? profile.name : baseSession.name,
@@ -161,6 +165,7 @@ export function watchSession(
         influencerCouponCode: typeof profile?.influencerCouponCode === "string" ? profile.influencerCouponCode : null,
         loyaltyPoints: Number.isInteger(loyaltyPoints) && loyaltyPoints > 0 ? loyaltyPoints : 0,
         loyaltyLifetimePoints: Number.isInteger(loyaltyLifetimePoints) && loyaltyLifetimePoints > 0 ? loyaltyLifetimePoints : 0,
+        reviewProductIds,
       });
     }, () => {
       if (currentGeneration === generation && auth.currentUser?.uid === user.uid) { callback(null); syncFailed(); }

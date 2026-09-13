@@ -4070,33 +4070,23 @@ select {
 .gift-card-visual {
   position: relative;
   display: grid !important;
-  place-content: center;
-  justify-items: center;
-  gap: 9px;
+  place-content: stretch;
   width: 100%;
   height: 100%;
   min-height: inherit;
   overflow: hidden;
   border: 1px solid rgba(240, 213, 120, 0.42);
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 82% 12%, rgba(214, 166, 61, 0.2), transparent 34%),
-    linear-gradient(145deg, #050504, #110d06 62%, #050504);
+  border-radius: 14px;
+  background: #030303;
   color: var(--gold-2);
   box-shadow: inset 0 0 0 5px #050504, inset 0 0 0 6px rgba(214, 166, 61, 0.18), 0 18px 45px rgba(0, 0, 0, 0.42);
 }
 
-.gift-card-visual > svg { width: 28px; height: 28px; }
-.gift-card-visual > img { width: min(48%, 180px); height: auto; object-fit: contain; }
-.gift-card-visual > span { font-family: var(--font-display); font-size: clamp(24px, 3vw, 40px); letter-spacing: 0.14em; }
-.gift-card-visual > small { color: var(--cream); font-size: 11px; letter-spacing: 0.12em; }
+.gift-card-visual > .gift-card-image { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
 .gift-card-visual.compact { min-height: 70px; border-radius: 8px; gap: 3px; }
-.gift-card-visual.compact > svg { width: 14px; height: 14px; }
-.gift-card-visual.compact > img { display: none; }
-.gift-card-visual.compact > span { font-size: 11px; }
-.gift-card-visual.compact > small { display: none; }
-.home-new-media .gift-card-visual { inset: 0 8% 8%; width: 84%; height: 92%; padding: 0; align-content: center; }
-.detail-gallery-frame .gift-card-visual { width: 88%; height: 70%; min-height: 300px; margin: auto; }
+.gift-card-visual.compact > .gift-card-image { display: block; object-fit: contain; }
+.home-new-media .gift-card-visual { inset: 6% 5%; width: 90%; height: 88%; padding: 0; align-content: center; background: #030303; }
+.detail-gallery-frame .gift-card-visual { inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; padding: clamp(12px, 2vw, 30px); border: 0; border-radius: 0; background: #030303; box-shadow: none; }
 
 .gift-card-wallet {
   margin-bottom: 24px;
@@ -4119,7 +4109,7 @@ select {
 @media (max-width: 620px) {
   .gift-card-wallet { padding: 18px; }
   .gift-card-wallet-grid { grid-template-columns: 1fr; }
-  .home-new-media .gift-card-visual { inset: 0 6% 6%; width: 88%; height: 94%; }
+  .home-new-media .gift-card-visual { inset: 5% 4%; width: 92%; height: 90%; }
 }
 
 .account-intro h1,

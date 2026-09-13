@@ -932,9 +932,10 @@ exports.submitReview = onCall(callableOptions, async (request) => {
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new HttpsError("invalid-argument", "Escolha uma classificação entre 1 e 5 estrelas.");
   if (comment.length < 10) throw new HttpsError("invalid-argument", "O comentário deve ter pelo menos 10 caracteres.");
 
-  const [productSnapshot, ordersSnapshot] = await Promise.all([
+  const [productSnapshot, ordersSnapshot, profileSnapshot] = await Promise.all([
     db.collection("products").doc(productId).get(),
     db.collection("orders").where("customerUid", "==", request.auth.uid).get(),
+    db.collection("profiles").doc(request.auth.uid).get(),
   ]);
   if (!productSnapshot.exists) throw new HttpsError("not-found", "Este produto já não está disponível.");
 
@@ -946,7 +947,10 @@ exports.submitReview = onCall(callableOptions, async (request) => {
       return orderedProductId === productId;
     });
   });
-  if (!deliveredOrder) {
+  const permittedProductIds = Array.isArray(profileSnapshot.data()?.reviewProductIds)
+    ? profileSnapshot.data().reviewProductIds.map((allowedProductId) => text(allowedProductId, 120).replace(/^decant-/, "").split("--")[0])
+    : [];
+  if (!deliveredOrder && !permittedProductIds.includes(productId)) {
     throw new HttpsError("permission-denied", "Só pode avaliar um produto depois de a encomenda ter sido entregue.");
   }
 

@@ -2832,11 +2832,12 @@ function ProductReviews({
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewMessage, setReviewMessage] = useState("");
   const [reviewError, setReviewError] = useState("");
-  const canReview = session?.role === "customer" && orders.some((order) => (
+  const hasReviewPermission = session?.reviewProductIds?.some((allowedProductId) => canonicalProductId(allowedProductId) === productId) === true;
+  const canReview = session?.role === "customer" && (hasReviewPermission || orders.some((order) => (
     order.status === "delivered"
     && order.customerUid === session.uid
     && order.items.some((item) => canonicalProductId(item.productId ?? item.id) === productId)
-  ));
+  )));
   const average = reviews.length
     ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
     : 0;
@@ -2986,7 +2987,7 @@ function ProductGallery({ product, lang }: { product: Product; lang: Lang }) {
 
 function ProductVisual({ product, hero = false, compact = false }: { product: Product; hero?: boolean; compact?: boolean }) {
   if (product.isGiftCard) {
-    return <div className={`visual gift-card-visual ${hero ? "hero-visual" : ""} ${compact ? "compact" : ""}`}><Gift aria-hidden="true" /><Image src="/mystic-essence-hero-logo.png" width={340} height={190} alt="" /><span>GIFT CARD</span><small>30 € · 50 € · 80 € · 100 €</small></div>;
+    return <div className={`visual gift-card-visual ${hero ? "hero-visual" : ""} ${compact ? "compact" : ""}`}><Image className="gift-card-image" src="/gift-card-mystic-essence.png" width={1536} height={1024} sizes={compact ? "90px" : hero ? "(max-width: 900px) 92vw, 46vw" : "(max-width: 720px) 86vw, 24vw"} alt="Gift Card Mystic Essence" priority={hero} /></div>;
   }
   const imageUrl = getProductImages(product)[0]?.imageUrl;
   if (imageUrl) {
