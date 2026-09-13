@@ -4796,6 +4796,15 @@ function CheckoutPage({
                       <small>{lang === "pt" ? "Grátis a partir de" : "Free from"} {price(shippingSettings[zone].freeFrom, lang)}</small>
                     </button>
                   ))}
+                  <a
+                    className="shipping-zone-contact"
+                    href="https://wa.me/351938258798?text=Ol%C3%A1%21%20Quero%20saber%20as%20op%C3%A7%C3%B5es%20de%20entrega%20para%20o%20resto%20da%20Europa."
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <strong>{lang === "pt" ? "Resto da Europa" : "Rest of Europe"}</strong>
+                    <small>{lang === "pt" ? "Entre em contacto connosco" : "Contact us"}</small>
+                  </a>
                 </div>
               </div>
               <fieldset className="checkout-carriers field full">

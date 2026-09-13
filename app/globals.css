@@ -3592,11 +3592,12 @@ select {
 
 .shipping-zone-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
-.shipping-zone-options button {
+.shipping-zone-options button,
+.shipping-zone-options .shipping-zone-contact {
   min-width: 0;
   min-height: 74px;
   padding: 13px 12px;
@@ -3607,11 +3608,13 @@ select {
   text-align: left;
   display: grid;
   gap: 6px;
+  text-decoration: none;
   transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
 }
 
 .shipping-zone-options button:hover,
-.shipping-zone-options button.active {
+.shipping-zone-options button.active,
+.shipping-zone-options .shipping-zone-contact:hover {
   border-color: rgba(240, 213, 120, 0.72);
   background: rgba(197, 144, 34, 0.16);
 }
@@ -3635,6 +3638,18 @@ select {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.shipping-zone-options .shipping-zone-contact {
+  border-style: dashed;
+}
+
+.shipping-zone-options .shipping-zone-contact small {
+  color: var(--gold-2);
+}
+
+@media (max-width: 1100px) and (min-width: 701px) {
+  .shipping-zone-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .billing-match {
