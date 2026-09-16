@@ -21,7 +21,7 @@ const declarations = ast.statements.filter((node) => {
 const js = ts.transpileModule(`${declarations}\nObject.assign(globalThis, { productSet, filterAdminCatalogue, searchCatalogue, productsForProfile, asDecantProduct, routeFromPath, getProductAudiences, toggleProductCategory });`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const api = vm.createContext({});
+const api = vm.createContext({ URLSearchParams });
 vm.runInContext(js, api);
 
 const sample = (id, overrides = {}) => ({
@@ -151,6 +151,7 @@ test("new navigation destinations support direct URLs", () => {
   assert.equal(api.routeFromPath("/conta/favoritos").view, "favorites");
   assert.equal(api.routeFromPath("/conta").view, "account");
   assert.equal(api.routeFromPath("/perfumes/unissexo").listing, "unisex");
+  assert.equal(api.routeFromPath("/pesquisa", "?q=Aromatix").searchQuery, "Aromatix");
 });
 
 test("mobile header exposes a direct, focused catalogue search", () => {
@@ -160,6 +161,8 @@ test("mobile header exposes a direct, focused catalogue search", () => {
   assert.match(header, /mobileSearchInput\.current\?\.focus\(\)/);
   assert.match(header, /className="mobile-header-search-panel"/);
   assert.match(header, /setMobileSearchOpen\(false\); onProduct\(product\.id\)/);
+  assert.match(header, /onSubmit=\{submitSearch\}/);
+  assert.match(header, /onSearch\(term\)/);
   assert.match(header, /className="mobile-nav"[\s\S]*onListing\("best"\)[\s\S]*onListing\("new"\)/);
 });
 

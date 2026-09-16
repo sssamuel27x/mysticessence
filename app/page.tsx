@@ -210,6 +210,7 @@ type AppRoute = {
   listing: ListingKind;
   profileFilter: ScentProfile | null;
   brandFilter?: string | null;
+  searchQuery?: string;
   activeId?: string;
   legal?: LegalKind;
 };
@@ -233,7 +234,7 @@ const LISTING_PATHS: Record<ListingKind, string> = {
   decants: "/decants",
 };
 
-function routeFromPath(pathname: string): AppRoute {
+function routeFromPath(pathname: string, search = ""): AppRoute {
   const path = pathname.replace(/\/+$/, "") || "/";
   const legalEntry = (Object.entries(LEGAL_PATHS) as [LegalKind, string][]).find(([, routePath]) => routePath === path);
   if (legalEntry) return { view: "legal", listing: "all", profileFilter: null, legal: legalEntry[0] };
@@ -247,6 +248,9 @@ function routeFromPath(pathname: string): AppRoute {
     return { view: "listing", listing: "all", profileFilter: null, brandFilter: decodeURIComponent(path.slice("/marcas/".length)) };
   }
   if (path === "/marcas") return { view: "listing", listing: "all", profileFilter: null, brandFilter: null };
+  if (path === "/pesquisa") {
+    return { view: "listing", listing: "all", profileFilter: null, searchQuery: new URLSearchParams(search).get("q")?.trim() ?? "" };
+  }
   if (path.startsWith("/produto/")) {
     return { view: "product", listing: "all", profileFilter: null, activeId: decodeURIComponent(path.slice("/produto/".length)) };
   }
@@ -1221,6 +1225,7 @@ function Storefront() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [toast, setToast] = useState("");
   const [syncError, setSyncError] = useState("");
   useEffect(() => {
@@ -1235,11 +1240,13 @@ function Storefront() {
 
   const activeProduct = activeId === GIFT_CARD_PRODUCT.id ? GIFT_CARD_PRODUCT : catalog.find((product) => product.id === activeId) ?? catalog[0] ?? PRODUCTS[0];
   const favoriteProduct = catalog.find((product) => product.id === favoriteProductId) ?? null;
-  const listingProducts = brandFilter
-    ? productsForBrand(productSet(catalog, "all"), brandFilter)
-    : profileFilter
-      ? productsForProfile(catalog, profileFilter)
-      : productSet(catalog, listing);
+  const listingProducts = submittedQuery
+    ? searchCatalogue([GIFT_CARD_PRODUCT, ...catalog], submittedQuery, lang)
+    : brandFilter
+      ? productsForBrand(productSet(catalog, "all"), brandFilter)
+      : profileFilter
+        ? productsForProfile(catalog, profileFilter)
+        : productSet(catalog, listing);
   const searchResults = useMemo(
     () => searchCatalogue([GIFT_CARD_PRODUCT, ...catalog], query, lang),
     [query, lang, catalog],
@@ -1250,6 +1257,7 @@ function Storefront() {
     setListing(route.listing);
     setProfileFilter(route.profileFilter);
     setBrandFilter(route.brandFilter ?? null);
+    setSubmittedQuery(route.searchQuery ?? "");
     if (route.activeId) setActiveId(route.activeId);
     if (route.legal) setLegalKind(route.legal);
     setMobileOpen(false);
@@ -1258,10 +1266,10 @@ function Storefront() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [view, listing, activeId, profileFilter, brandFilter]);
+  }, [view, listing, activeId, profileFilter, brandFilter, submittedQuery]);
 
   useEffect(() => {
-    const syncFromAddress = () => applyRoute(routeFromPath(window.location.pathname));
+    const syncFromAddress = () => applyRoute(routeFromPath(window.location.pathname, window.location.search));
     syncFromAddress();
     window.addEventListener("popstate", syncFromAddress);
     return () => window.removeEventListener("popstate", syncFromAddress);
@@ -1446,7 +1454,7 @@ function Storefront() {
   }
 
   function navigate(path: string, route: AppRoute) {
-    if (window.location.pathname !== path) window.history.pushState({ mysticRoute: true }, "", path);
+    if (`${window.location.pathname}${window.location.search}` !== path) window.history.pushState({ mysticRoute: true }, "", path);
     applyRoute(route);
   }
 
@@ -1456,6 +1464,12 @@ function Storefront() {
 
   function openListing(kind: ListingKind) {
     navigate(LISTING_PATHS[kind], { view: "listing", listing: kind, profileFilter: null });
+  }
+
+  function openSearch(searchQuery: string) {
+    const term = searchQuery.trim();
+    if (!term) return;
+    navigate(`/pesquisa?q=${encodeURIComponent(term)}`, { view: "listing", listing: "all", profileFilter: null, searchQuery: term });
   }
 
   function openProfile(profile: ScentProfile) {
@@ -1556,6 +1570,7 @@ function Storefront() {
         onListing={openListing}
         onBrand={openBrand}
         onProduct={openProduct}
+        onSearch={openSearch}
         onCart={() => setCartOpen(true)}
         onFavorites={openFavorites}
         onAccount={() => session?.role === "admin"
@@ -1587,6 +1602,7 @@ function Storefront() {
             kind={listing}
             profile={profileFilter}
             brand={brandFilter}
+            searchTerm={submittedQuery}
             products={listingProducts}
             onProduct={openProduct}
             onFavorite={openFavorite}
@@ -1748,6 +1764,7 @@ function Header({
   onListing,
   onBrand,
   onProduct,
+  onSearch,
   onCart,
   onAccount,
   onFavorites,
@@ -1766,6 +1783,7 @@ function Header({
   onListing: (kind: ListingKind) => void;
   onBrand: (brand: string) => void;
   onProduct: (id: string) => void;
+  onSearch: (query: string) => void;
   onCart: () => void;
   onAccount: () => void;
   onFavorites: () => void;
@@ -1780,6 +1798,15 @@ function Header({
     if (!mobileSearchOpen) return;
     window.requestAnimationFrame(() => mobileSearchInput.current?.focus());
   }, [mobileSearchOpen]);
+  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const term = query.trim();
+    if (!term) return;
+    setMobileSearchOpen(false);
+    setMobileOpen(false);
+    setQuery("");
+    onSearch(term);
+  };
   const announcement = lang === "pt"
     ? `Envios grátis para Portugal Continental a partir de ${price(settings.continental.freeFrom, lang)}`
     : `Free shipping to mainland Portugal from ${price(settings.continental.freeFrom, lang)}`;
@@ -1833,7 +1860,7 @@ function Header({
             <User size={17} />
             <span>{session?.role === "admin" ? "Admin" : session?.name.split(" ")[0] || t.account}</span>
           </button>
-          <div className="search-wrap">
+          <form className="search-wrap" onSubmit={submitSearch}>
             <Search className="search-icon" size={20} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} />
             {query.trim() && (
@@ -1842,7 +1869,7 @@ function Header({
                   <p>{lang === "pt" ? "Sem resultados" : "No results"}</p>
                 ) : (
                   searchResults.map((product) => (
-                    <button key={product.id} onClick={() => onProduct(product.id)}>
+                    <button type="button" key={product.id} onClick={() => onProduct(product.id)}>
                       <ProductVisual product={product} compact />
                       <span>
                         <strong>{product.name[lang]}</strong>
@@ -1853,7 +1880,7 @@ function Header({
                 )}
               </div>
             )}
-          </div>
+          </form>
           <button
             className="mobile-header-search-button"
             type="button"
@@ -1884,15 +1911,15 @@ function Header({
         <div className="mobile-header-search-layer">
           <button className="mobile-header-search-backdrop" type="button" onClick={() => setMobileSearchOpen(false)} aria-label={lang === "pt" ? "Fechar pesquisa" : "Close search"} />
           <section className="mobile-header-search-panel" role="dialog" aria-label={t.search}>
-            <div className="mobile-header-search-field">
+            <form className="mobile-header-search-field" onSubmit={submitSearch}>
               <Search size={19} aria-hidden="true" />
               <input ref={mobileSearchInput} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} aria-label={t.search} autoComplete="off" />
               <button type="button" onClick={() => setMobileSearchOpen(false)} aria-label={lang === "pt" ? "Fechar pesquisa" : "Close search"}><X size={19} /></button>
-            </div>
+            </form>
             {query.trim() ? (
               <div className="mobile-search-results">
                 {searchResults.length === 0 ? <p>{lang === "pt" ? "Sem resultados" : "No results"}</p> : searchResults.map((product) => (
-                  <button key={product.id} onClick={() => { setMobileSearchOpen(false); onProduct(product.id); }}>
+                  <button type="button" key={product.id} onClick={() => { setMobileSearchOpen(false); onProduct(product.id); }}>
                     <span><strong>{product.name[lang]}</strong><small>{product.brand} · {price(product.price, lang)}</small></span>
                     <ChevronRight size={16} />
                   </button>
@@ -1911,20 +1938,20 @@ function Header({
               <strong>{lang === "pt" ? "Menu" : "Menu"}</strong>
               <button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label={lang === "pt" ? "Fechar menu" : "Close menu"}><X size={22} /></button>
             </div>
-            <div className="mobile-search">
+            <form className="mobile-search" onSubmit={submitSearch}>
               <Search size={18} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} aria-label={t.search} />
               {query.trim() && (
                 <div className="mobile-search-results">
                   {searchResults.length === 0 ? <p>{lang === "pt" ? "Sem resultados" : "No results"}</p> : searchResults.map((product) => (
-                    <button key={product.id} onClick={() => onProduct(product.id)}>
+                    <button type="button" key={product.id} onClick={() => onProduct(product.id)}>
                       <span><strong>{product.name[lang]}</strong><small>{product.brand} · {price(product.price, lang)}</small></span>
                       <ChevronRight size={16} />
                     </button>
                   ))}
                 </div>
               )}
-            </div>
+            </form>
             <nav className="mobile-nav" aria-label={lang === "pt" ? "Navegação mobile" : "Mobile navigation"}>
               <button onClick={() => onListing("all")}><span>{lang === "pt" ? "Ver todos" : "View all"}</span><ChevronRight size={17} /></button>
               <button onClick={() => onListing("men")}><span>{lang === "pt" ? "Perfumes masculinos" : "Men's fragrances"}</span><ChevronRight size={17} /></button>
@@ -2394,6 +2421,7 @@ function ListingPage({
   kind,
   profile,
   brand,
+  searchTerm,
   products,
   onProduct,
   onFavorite,
@@ -2404,6 +2432,7 @@ function ListingPage({
   kind: ListingKind;
   profile: ScentProfile | null;
   brand: string | null;
+  searchTerm: string;
   products: Product[];
   onProduct: (id: string) => void;
   onFavorite: (product: Product) => void;
@@ -2415,7 +2444,9 @@ function ListingPage({
     unisex: { pt: "Perfumes unissexo", en: "Unisex fragrances" },
     other: { pt: "Outros produtos", en: "Other products" },
   };
-  const title = brand
+  const title = searchTerm
+    ? (lang === "pt" ? `Resultados para “${searchTerm}”` : `Results for “${searchTerm}”`)
+    : brand
     ?? (profile
     ? SCENT_PROFILE_LABELS[lang][profile]
     : categoryTitles[kind]?.[lang]
@@ -2455,7 +2486,7 @@ function ListingPage({
     setDraftFilters(EMPTY_LISTING_FILTERS);
     setActiveFilters(EMPTY_LISTING_FILTERS);
     setSortBy("newest");
-  }, [kind, profile, brand]);
+  }, [kind, profile, brand, searchTerm]);
 
   const toggleListFilter = <K extends "brands" | "profiles">(key: K, value: ListingFilters[K][number]) => {
     setDraftFilters((current) => ({
@@ -2475,12 +2506,12 @@ function ListingPage({
   return (
     <section className="listing-page">
       {kind === "decants" && <DecantPromo lang={lang} />}
-      <div className="listing-hero">
+      <div className={`listing-hero ${searchTerm ? "search-results-hero" : ""}`}>
         <p>{lang === "pt" ? "Início" : "Home"} / {title}</p>
-        <span className="eyebrow">{brand ? (lang === "pt" ? "Marca" : "Brand") : profile ? (lang === "pt" ? "Perfil olfativo" : "Scent profile") : (lang === "pt" ? "Perfumaria Árabe" : "Arabian Perfumery")}</span>
+        <span className="eyebrow">{searchTerm ? (lang === "pt" ? "Pesquisa no catálogo" : "Catalogue search") : brand ? (lang === "pt" ? "Marca" : "Brand") : profile ? (lang === "pt" ? "Perfil olfativo" : "Scent profile") : (lang === "pt" ? "Perfumaria Árabe" : "Arabian Perfumery")}</span>
         <h1>{title}</h1>
         {kind === "other" && <p>{lang === "pt" ? "Cremes, coffrets, body mists e ambientadores." : "Creams, gift sets, body mists and home fragrances."}</p>}
-        <small>{filteredProducts.length + 1} {t.products}</small>
+        <small>{filteredProducts.length + (searchTerm ? 0 : 1)} {t.products}</small>
       </div>
       <div className="listing-toolbar">
         <span>{activeFilterCount > 0 ? `${activeFilterCount} ${lang === "pt" ? "filtros ativos" : "active filters"}` : ""}</span>
@@ -2535,7 +2566,7 @@ function ListingPage({
           </button>
         </aside>
         <div className="home-new-grid listing-grid listing-showcase-grid">
-          <ShowcaseProductCard
+          {!searchTerm && <ShowcaseProductCard
             key={GIFT_CARD_PRODUCT.id}
             product={GIFT_CARD_PRODUCT}
             label={lang === "pt" ? "Presente digital" : "Digital gift"}
@@ -2543,12 +2574,17 @@ function ListingPage({
             onProduct={onProduct}
             onFavorite={onFavorite}
             favoriteFolders={favoriteFolders}
-          />
+          />}
+          {searchTerm && orderedProducts.length === 0 && <div className="listing-empty">
+            <Search size={24} />
+            <strong>{lang === "pt" ? "Nenhum produto encontrado" : "No products found"}</strong>
+            <p>{lang === "pt" ? "Tente pesquisar por outro nome, marca ou nota." : "Try another name, brand or note."}</p>
+          </div>}
           {orderedProducts.map((product) => (
             <ShowcaseProductCard
               key={product.id}
               product={product}
-              label={product.isDecant ? "Decant" : title}
+              label={product.isDecant ? "Decant" : searchTerm ? (lang === "pt" ? "Resultado" : "Result") : title}
               lang={lang}
               onProduct={onProduct}
               onFavorite={onFavorite}

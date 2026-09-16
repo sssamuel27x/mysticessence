@@ -2435,6 +2435,13 @@ a {
   font-size: clamp(64px, 9vw, 120px);
 }
 
+.listing-hero.search-results-hero h1 {
+  max-width: 1100px;
+  font-size: clamp(42px, 6vw, 82px);
+  line-height: 0.98;
+  overflow-wrap: anywhere;
+}
+
 .listing-hero small {
   position: absolute;
   right: 0;
