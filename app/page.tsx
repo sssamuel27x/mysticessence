@@ -1012,7 +1012,7 @@ function price(value: number, lang: Lang) {
 }
 
 function adminSaveError(error: unknown, lang: Lang) {
-  const message = error instanceof Error ? error.message.replace(/^FirebaseError:\s*/i, "") : "";
+  const message = error instanceof Error ? error.message.replace(/^FirebaseError:\s*/i, "").replace(/\s*\[\d{3}\]\s*$/, "") : "";
   if (/permission|insufficient/i.test(message)) {
     return lang === "pt"
       ? "A sessão não tem permissão de administrador. Termine sessão, volte a entrar e tente novamente."

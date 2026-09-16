@@ -270,7 +270,7 @@ export async function saveProductGroup<T extends { id: string }>(product: T, dec
 
 export async function applyGlobalDecantPricing(rules: DecantPricingRule[]) {
   if (!functions) throw new Error("Firebase não está configurado.");
-  return (await httpsCallable(functions, "applyDecantPricing", { timeout: 120000 })({ rules })).data;
+  return (await httpsCallable<{ rules: DecantPricingRule[] }, { count: number; decantCount: number }>(functions, "applyDecantPricing", { timeout: 300000 })({ rules })).data;
 }
 
 export async function reconcilePayment(orderId: string) {

@@ -312,6 +312,25 @@ test('bulk decant pricing updates settings and both product records preserving c
   assert.equal((await db.doc('products/decant-bulk-audit').get()).data().price, 3.7);
 });
 
+test('bulk decant pricing processes catalogues larger than 450 documents', async () => {
+  const batch = db.batch();
+  for (let index = 0; index < 230; index++) {
+    const id = `large-catalogue-${String(index).padStart(3, '0')}`;
+    const variants = [{ volume: '100ml', price: 60, stock: 2 }, { volume: '10ml', price: 7.5, isDecant: true, stock: 4 }];
+    batch.set(db.doc(`products/${id}`), { price: 60, variants });
+    batch.set(db.doc(`products/decant-${id}`), { isDecant: true, variants: [variants[1]], price: 7.5, volume: '10ml' });
+  }
+  await batch.commit();
+  const rules = [{ id: 'large-all', minPrice: 0, maxPrice: 9999, size: 10, price: 9.8 }];
+  const result = await f.applyDecantPricing.run(adminRequest({ rules }));
+  assert.ok(result.count >= 230);
+  assert.ok(result.decantCount >= 230);
+  assert.equal((await db.doc('products/large-catalogue-000').get()).data().variants[1].price, 9.8);
+  assert.equal((await db.doc('products/large-catalogue-229').get()).data().variants[1].price, 9.8);
+  assert.equal((await db.doc('products/decant-large-catalogue-229').get()).data().price, 9.8);
+  assert.equal((await db.doc('products/large-catalogue-229').get()).data().variants[1].stock, 4);
+});
+
 test('revoking all sessions requires a recent login and blocks further authenticated calls', async () => {
   await assert.rejects(f.revokeMySessions.run({ data: {} }), { code: 'unauthenticated' });
   await assert.rejects(f.revokeMySessions.run({ auth: buyer, data: {} }), { code: 'failed-precondition' });

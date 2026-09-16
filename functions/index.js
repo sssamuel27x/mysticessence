@@ -807,33 +807,108 @@ exports.reconcilePendingPayments = onSchedule({ schedule: "every 5 minutes", reg
   }
 });
 
-exports.applyDecantPricing = onCall({ ...callableOptions, timeoutSeconds: 120 }, async request => {
+exports.applyDecantPricing = onCall({ ...callableOptions, timeoutSeconds: 300 }, async request => {
   requireAdmin(request);
   const { isValidDecantPricing, applyDecantPricing } = require("./decant-pricing.mjs");
   const rules = request.data?.rules;
   if (!isValidDecantPricing(rules) || rules.some(rule => rule.price <= 0)) throw new HttpsError("invalid-argument", "Preços dos decants inválidos.");
-  return db.runTransaction(async transaction => {
-    const snapshot = await transaction.get(db.collection("products"));
-    // Refuse oversized catalogues before writing anything; never silently split a financial update.
-    if (snapshot.size > 450) throw new HttpsError("failed-precondition", "O catálogo excede o limite de atualização atómica (450 produtos). Nenhum preço foi alterado.");
-    let count = 0;
-    for (const document of snapshot.docs) {
-      const product = document.data();
-      if (product.isDecant || document.id.startsWith("decant-")) continue;
-      const updated = applyDecantPricing(product, rules);
-      if (!Array.isArray(updated.variants)) continue;
-      transaction.update(document.ref, { variants: updated.variants, updatedAt: new Date().toISOString() });
-      const decants = updated.variants.filter(variant => variant.isDecant);
-      const decantDoc = snapshot.docs.find(entry => entry.id === `decant-${document.id}`);
-      if (decantDoc && decants.length) {
-        const first = decants.find(variant => !variant.soldout && variant.stock !== 0) || decants[0];
-        transaction.update(decantDoc.ref, { variants: decants, price: first.price, volume: first.volume, updatedAt: new Date().toISOString() });
-      }
-      count++;
+  const operationId = randomUUID();
+  const operationRef = db.collection("settings").doc("decantPricingUpdate");
+  const startedAt = new Date().toISOString();
+
+  await db.runTransaction(async transaction => {
+    const current = await transaction.get(operationRef);
+    const active = current.data();
+    const activeSince = Date.parse(active?.startedAt || "");
+    if (active?.status === "running" && Number.isFinite(activeSince) && Date.now() - activeSince < 10 * 60 * 1000) {
+      throw new HttpsError("aborted", "Já existe uma atualização de preços em curso. Aguarde alguns segundos e tente novamente.");
     }
-    transaction.set(db.collection("settings").doc("decants"), { rules, updatedAt: new Date().toISOString() });
-    return { count };
+    transaction.set(operationRef, {
+      operationId,
+      status: "running",
+      processed: 0,
+      total: null,
+      startedAt,
+      updatedAt: startedAt,
+      requestedBy: request.auth.uid,
+    });
   });
+
+  try {
+    const catalogue = await db.collection("products").get();
+    const productIds = catalogue.docs
+      .filter(document => {
+        const product = document.data();
+        return !product.isDecant
+          && !document.id.startsWith("decant-")
+          && Array.isArray(product.variants)
+          && product.variants.some(variant => variant?.isDecant);
+      })
+      .map(document => document.id);
+
+    await operationRef.set({ total: productIds.length, updatedAt: new Date().toISOString() }, { merge: true });
+    let updatedProducts = 0;
+    let updatedDecantDocuments = 0;
+    const concurrency = 20;
+
+    for (let offset = 0; offset < productIds.length; offset += concurrency) {
+      const group = productIds.slice(offset, offset + concurrency);
+      const results = await Promise.all(group.map(productId => db.runTransaction(async transaction => {
+        const productRef = db.collection("products").doc(productId);
+        const decantRef = db.collection("products").doc(`decant-${productId}`);
+        const [productSnapshot, decantSnapshot] = await Promise.all([
+          transaction.get(productRef),
+          transaction.get(decantRef),
+        ]);
+        if (!productSnapshot.exists) return { product: false, decant: false };
+        const product = productSnapshot.data();
+        if (product.isDecant || !Array.isArray(product.variants)) return { product: false, decant: false };
+        const updated = applyDecantPricing(product, rules);
+        const decants = updated.variants.filter(variant => variant?.isDecant);
+        if (!decants.length) return { product: false, decant: false };
+        const updatedAt = new Date().toISOString();
+        transaction.update(productRef, { variants: updated.variants, updatedAt });
+        if (decantSnapshot.exists) {
+          const first = decants.find(variant => !variant.soldout && variant.stock !== 0) || decants[0];
+          transaction.update(decantRef, { variants: decants, price: first.price, volume: first.volume, updatedAt });
+        }
+        return { product: true, decant: decantSnapshot.exists };
+      })));
+      updatedProducts += results.filter(result => result.product).length;
+      updatedDecantDocuments += results.filter(result => result.decant).length;
+      await operationRef.set({ processed: Math.min(offset + group.length, productIds.length), updatedAt: new Date().toISOString() }, { merge: true });
+    }
+
+    const completedAt = new Date().toISOString();
+    await db.runTransaction(async transaction => {
+      const operation = await transaction.get(operationRef);
+      if (operation.data()?.operationId !== operationId) throw new HttpsError("aborted", "A atualização foi substituída por uma operação mais recente.");
+      transaction.set(db.collection("settings").doc("decants"), { rules, updatedAt: completedAt });
+      transaction.set(operationRef, {
+        status: "completed",
+        processed: productIds.length,
+        total: productIds.length,
+        updatedProducts,
+        updatedDecantDocuments,
+        completedAt,
+        updatedAt: completedAt,
+      }, { merge: true });
+    });
+    return { count: updatedProducts, decantCount: updatedDecantDocuments };
+  } catch (error) {
+    try {
+      await db.runTransaction(async transaction => {
+        const operation = await transaction.get(operationRef);
+        if (operation.data()?.operationId !== operationId) return;
+        transaction.set(operationRef, { status: "failed", failedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, { merge: true });
+      });
+    } catch {
+      console.error("Could not record decant pricing failure", { operationId });
+    }
+    if (error instanceof HttpsError) throw error;
+    console.error("Decant pricing update failed", { operationId });
+    throw new HttpsError("internal", "A atualização foi interrompida. Tente novamente para concluir todos os perfumes.");
+  }
 });
 
 exports.validateCoupon = onCall(callableOptions, async (request) => {
