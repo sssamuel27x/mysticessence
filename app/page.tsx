@@ -458,7 +458,7 @@ function orderStatusLabel(order: Order, status: OrderStatus, lang: Lang) {
 const COPY = {
   pt: {
     nav: { perfumes: "Perfumes", brands: "Marcas", newIn: "Novidades", best: "Best sellers", sale: "Promoções", decants: "Decants" },
-    search: "Pesquisar fragrâncias, marcas ou notas",
+    search: "Pesquisar em todo o catálogo",
     account: "Conta",
     heroEyebrow: "Perfumaria Árabe em Santa Maria da Feira",
     heroTitle: "Mystic Essence",
@@ -564,7 +564,7 @@ const COPY = {
   },
   en: {
     nav: { perfumes: "Perfumes", brands: "Brands", newIn: "New in", best: "Best sellers", sale: "Offers", decants: "Decants" },
-    search: "Search fragrances, brands or notes",
+    search: "Search the whole catalogue",
     account: "Account",
     heroEyebrow: "Arabian perfumery in Santa Maria da Feira",
     heroTitle: "Mystic Essence",
@@ -1069,6 +1069,51 @@ function filterAdminCatalogue(products: Product[], query: string, category: List
   });
 }
 
+function normalizeCatalogueSearch(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function searchCatalogue(products: Product[], query: string, lang: Lang) {
+  const words = normalizeCatalogueSearch(query).split(" ").filter(Boolean);
+  if (!words.length) return [];
+
+  const seen = new Set<string>();
+  return products.filter((product) => {
+    if (seen.has(product.id)) return false;
+    seen.add(product.id);
+
+    const variants = product.variants ?? [];
+    const text = normalizeCatalogueSearch([
+      product.id,
+      product.name?.[lang],
+      product.name?.pt,
+      product.name?.en,
+      product.brand,
+      product.category,
+      product.family?.[lang],
+      product.family?.pt,
+      product.family?.en,
+      product.desc?.[lang],
+      product.desc?.pt,
+      product.desc?.en,
+      product.scentProfile,
+      ...(product.audiences ?? []),
+      product.volume,
+      ...variants.map((variant) => variant.volume),
+      ...(product.notes?.top?.pt ?? []),
+      ...(product.notes?.top?.en ?? []),
+      ...(product.notes?.heart?.pt ?? []),
+      ...(product.notes?.heart?.en ?? []),
+      ...(product.notes?.base?.pt ?? []),
+      ...(product.notes?.base?.en ?? []),
+      product.isDecant ? "decant amostra sample" : "perfume frasco bottle",
+      product.isGiftCard ? "gift card presente digital vale oferta" : "",
+    ].filter(Boolean).join(" "));
+
+    return words.every((word) => text.includes(word));
+  });
+}
+
 function productsForProfile(products: Product[], profile: ScentProfile) {
   return products.filter((product) => !product.isDecant && product.category !== "Outros produtos" && product.scentProfile === profile);
 }
@@ -1195,25 +1240,10 @@ function Storefront() {
     : profileFilter
       ? productsForProfile(catalog, profileFilter)
       : productSet(catalog, listing);
-  const searchResults = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return [GIFT_CARD_PRODUCT, ...catalog].filter((product) => {
-      const haystack = [
-        product.name[lang],
-        product.brand,
-        product.family[lang],
-        product.desc?.[lang] ?? product.desc?.pt ?? "",
-        product.category,
-        ...product.notes.top[lang],
-        ...product.notes.heart[lang],
-        ...product.notes.base[lang],
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(q);
-    }).slice(0, 5);
-  }, [query, lang, catalog]);
+  const searchResults = useMemo(
+    () => searchCatalogue([GIFT_CARD_PRODUCT, ...catalog], query, lang),
+    [query, lang, catalog],
+  );
 
   function applyRoute(route: AppRoute) {
     setView(route.view);
@@ -1868,7 +1898,7 @@ function Header({
                   </button>
                 ))}
               </div>
-            ) : <p className="mobile-header-search-hint">{lang === "pt" ? "Pesquise por perfume, marca ou notas." : "Search by fragrance, brand or notes."}</p>}
+            ) : <p className="mobile-header-search-hint">{lang === "pt" ? "Pesquise por qualquer palavra: perfume, marca, categoria, descrição ou notas." : "Search for any word: fragrance, brand, category, description or notes."}</p>}
           </section>
         </div>
       )}

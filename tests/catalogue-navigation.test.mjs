@@ -9,6 +9,7 @@ const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true
 const names = new Set([
   "LISTING_PATHS", "LEGAL_PATHS", "SCENT_PROFILE_LABELS", "SCENT_PROFILES",
   "DISCOUNTS", "PROMOTION_ENDS", "productSet", "isNewProduct", "filterAdminCatalogue",
+  "normalizeCatalogueSearch", "searchCatalogue",
   "productDiscount", "productPromotionEnd", "productsForProfile", "asDecantProduct", "routeFromPath",
   "getProductAudiences", "toggleProductCategory",
 ]);
@@ -17,7 +18,7 @@ const declarations = ast.statements.filter((node) => {
   if (ts.isVariableStatement(node)) return node.declarationList.declarations.some((declaration) => names.has(declaration.name.getText(ast)));
   return false;
 }).map((node) => node.getText(ast)).join("\n");
-const js = ts.transpileModule(`${declarations}\nObject.assign(globalThis, { productSet, filterAdminCatalogue, productsForProfile, asDecantProduct, routeFromPath, getProductAudiences, toggleProductCategory });`, {
+const js = ts.transpileModule(`${declarations}\nObject.assign(globalThis, { productSet, filterAdminCatalogue, searchCatalogue, productsForProfile, asDecantProduct, routeFromPath, getProductAudiences, toggleProductCategory });`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const api = vm.createContext({});
@@ -27,6 +28,14 @@ const sample = (id, overrides = {}) => ({
   id, name: { pt: id, en: id }, brand: "Afnan", category: "Masculinos",
   audiences: ["men"], bestSeller: false, isNew: false, tag: "stock",
   scentProfile: "fresh", variants: [{ volume: "100ml", price: 40 }, { volume: "5ml", price: 5, isDecant: true }],
+  family: { pt: "Amadeirado cítrico", en: "Woody citrus" },
+  desc: { pt: "Uma fragrância elegante", en: "An elegant fragrance" },
+  notes: {
+    top: { pt: ["Bergamota"], en: ["Bergamot"] },
+    heart: { pt: ["Jasmim"], en: ["Jasmine"] },
+    base: { pt: ["Baunilha"], en: ["Vanilla"] },
+  },
+  volume: "100 ml",
   ...overrides,
 });
 const products = [
@@ -42,6 +51,32 @@ const ids = (items) => Array.from(items, (item) => item.id);
 test("catalogue search matches names and brands without case or accent sensitivity", () => {
   assert.deepEqual(ids(api.filterAdminCatalogue(products, " CEDRO afnan ", "all", "all")), ["cedro"]);
   assert.deepEqual(ids(api.filterAdminCatalogue(products, "Lattafa", "all", "all")), ["rose"]);
+});
+
+test("store search returns every matching product and searches the full catalogue text", () => {
+  const aromatix = Array.from({ length: 8 }, (_, index) => sample(`aromatix-${index}`, {
+    name: { pt: `Aromatix ${index}`, en: `Aromatix ${index}` },
+    brand: "French Avenue",
+    isDecant: index % 2 === 1,
+  }));
+  const catalogue = [
+    ...aromatix,
+    sample("citrus", { family: { pt: "Frescos e cítricos", en: "Fresh and citrus" } }),
+    sample("vanilla", {
+      name: { pt: "Noite", en: "Night" },
+      notes: {
+        top: { pt: [], en: [] },
+        heart: { pt: [], en: [] },
+        base: { pt: ["Fava tonka"], en: ["Tonka bean"] },
+      },
+    }),
+  ];
+
+  assert.equal(api.searchCatalogue(catalogue, "Aromatix", "pt").length, 8);
+  assert.deepEqual(ids(api.searchCatalogue(catalogue, "french aromatix", "pt")), ids(aromatix));
+  assert.deepEqual(ids(api.searchCatalogue(catalogue, "citricos", "pt")), ["citrus"]);
+  assert.deepEqual(ids(api.searchCatalogue(catalogue, "tonka", "pt")), ["vanilla"]);
+  assert.deepEqual(ids(api.searchCatalogue(catalogue, "5ml decant", "pt")), aromatix.filter((product) => product.isDecant).map((product) => product.id));
 });
 
 test("catalogue category and highlight filters combine and ignore decant duplicates", () => {
