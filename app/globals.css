@@ -8646,7 +8646,8 @@ select {
 }
 
 .loyalty-admin-profile-list > article {
-  grid-template-columns: minmax(230px, 1fr) 150px minmax(300px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) 150px;
+  min-width: 0;
 }
 
 .loyalty-admin-balance span,
@@ -8669,9 +8670,11 @@ select {
 
 .loyalty-admin-grant {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) auto;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1fr) auto;
   align-items: end;
   gap: 10px;
+  min-width: 0;
 }
 
 .loyalty-admin-grant label {
@@ -8706,6 +8709,9 @@ select {
 
 .loyalty-admin-actions .ghost-button {
   min-height: 42px;
+  min-width: 112px;
+  padding: 8px 12px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
