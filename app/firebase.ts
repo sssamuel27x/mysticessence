@@ -512,6 +512,12 @@ export async function grantLoyaltyPoints(payload: { uid: string; points: number 
   return (await callable(payload)).data;
 }
 
+export async function removeLoyaltyPoints(payload: { uid: string; points: number }) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<typeof payload, { uid: string; points: number; balance: number }>(functions, "removeLoyaltyPoints");
+  return (await callable(payload)).data;
+}
+
 export async function updateOrder(id: string, data: Record<string, unknown>) {
   if (!database) throw new Error("Firebase não está configurado.");
   await updateDoc(doc(database, "orders", id), cleanData(data));

@@ -23,6 +23,7 @@ import {
   createCheckout,
   deleteFavoriteFolder,
   grantLoyaltyPoints,
+  removeLoyaltyPoints,
   type IfthenpayCheckoutResult,
   firebaseEnabled,
   paymentsEnabled,
@@ -353,7 +354,7 @@ type InfluencerCouponUse = {
 type LoyaltyHistoryEntry = {
   id: string;
   orderId?: string;
-  kind: "earn" | "redeem" | "release" | "admin_grant";
+  kind: "earn" | "redeem" | "release" | "admin_grant" | "admin_deduction";
   status: "reserved" | "completed" | "released";
   points: number;
   rewardId?: string | null;
@@ -3340,6 +3341,8 @@ function AccountPage({
                 ? (lang === "pt" ? "Pontos ganhos" : "Points earned")
                 : entry.kind === "admin_grant"
                   ? (lang === "pt" ? "Pontos adicionados pela Mystic Essence" : "Points added by Mystic Essence")
+                : entry.kind === "admin_deduction"
+                  ? (lang === "pt" ? "Pontos removidos pela Mystic Essence" : "Points removed by Mystic Essence")
                 : entry.kind === "release"
                   ? (lang === "pt" ? "Pontos devolvidos" : "Points returned")
                   : entry.status === "reserved"
@@ -4006,7 +4009,7 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Adicionar pontos" : "Add points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <RevokeSessionsButton lang={lang} disabled={adminBusy} />
@@ -4404,25 +4407,37 @@ function LoyaltyPointsManager({
   const normalizedQuery = query.trim().toLowerCase();
   const visibleProfiles = profiles.filter((profile) => !normalizedQuery || `${profile.name ?? ""} ${profile.email}`.toLowerCase().includes(normalizedQuery));
 
-  async function addPoints(profile: CustomerProfile) {
+  async function changePoints(profile: CustomerProfile, action: "add" | "remove") {
     const points = Number(drafts[profile.uid]);
     if (!Number.isInteger(points) || points < 1 || points > 1000000) {
       setMessageKind("error");
       setMessage(lang === "pt" ? "Indique uma quantidade inteira entre 1 e 1 000 000 pontos." : "Enter a whole number between 1 and 1,000,000 points.");
       return;
     }
+    const currentBalance = Math.max(0, Math.trunc(Number(profile.loyaltyPoints) || 0));
+    if (action === "remove" && points > currentBalance) {
+      setMessageKind("error");
+      setMessage(lang === "pt" ? `Esta conta só tem ${currentBalance} pontos disponíveis.` : `This account only has ${currentBalance} points available.`);
+      return;
+    }
     setSavingUid(profile.uid);
     setMessage("");
     try {
-      const result = await grantLoyaltyPoints({ uid: profile.uid, points });
+      const result = action === "add"
+        ? await grantLoyaltyPoints({ uid: profile.uid, points })
+        : await removeLoyaltyPoints({ uid: profile.uid, points });
       setDrafts((current) => ({ ...current, [profile.uid]: "" }));
       setMessageKind("success");
-      setMessage(lang === "pt"
-        ? `${points} pontos adicionados a ${profile.email}. Novo saldo: ${result.balance} pontos.`
-        : `${points} points added to ${profile.email}. New balance: ${result.balance} points.`);
+      setMessage(action === "add"
+        ? (lang === "pt"
+          ? `${points} pontos adicionados a ${profile.email}. Novo saldo: ${result.balance} pontos.`
+          : `${points} points added to ${profile.email}. New balance: ${result.balance} points.`)
+        : (lang === "pt"
+          ? `${points} pontos removidos de ${profile.email}. Novo saldo: ${result.balance} pontos.`
+          : `${points} points removed from ${profile.email}. New balance: ${result.balance} points.`));
     } catch (error) {
       setMessageKind("error");
-      setMessage(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível adicionar os pontos." : "Could not add the points."));
+      setMessage(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível alterar os pontos." : "Could not change the points."));
     } finally {
       setSavingUid(null);
     }
@@ -4431,9 +4446,9 @@ function LoyaltyPointsManager({
   return <>
     <button className="modal-backdrop" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"} />
     <section className="influencer-manager loyalty-points-manager" role="dialog" aria-modal="true" aria-labelledby="loyalty-points-manager-title">
-      <header><div><Sparkles size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="loyalty-points-manager-title">{lang === "pt" ? "Adicionar pontos" : "Add points"}</h2></div></div><button type="button" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={20} /></button></header>
+      <header><div><Sparkles size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="loyalty-points-manager-title">{lang === "pt" ? "Gerir pontos" : "Manage points"}</h2></div></div><button type="button" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={20} /></button></header>
       <div className="influencer-manager-search"><Search size={18} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={lang === "pt" ? "Pesquisar por nome ou email" : "Search by name or email"} /></div>
-      <p className="influencer-manager-help">{lang === "pt" ? "Escolha uma conta e indique quantos pontos pretende adicionar. A operação fica registada no histórico do cliente." : "Choose an account and enter how many points to add. The operation is recorded in the customer's history."}</p>
+      <p className="influencer-manager-help">{lang === "pt" ? "Escolha uma conta, indique a quantidade e adicione ou remova pontos. Todas as operações ficam registadas no histórico do cliente." : "Choose an account, enter an amount, and add or remove points. Every operation is recorded in the customer's history."}</p>
       {message && <p className={`influencer-manager-message ${messageKind === "error" ? "is-error" : ""}`} role={messageKind === "error" ? "alert" : "status"}>{message}</p>}
       <div className="influencer-profile-list loyalty-admin-profile-list">
         {visibleProfiles.length === 0 ? <div className="account-empty-state"><User size={24} /><strong>{lang === "pt" ? "Nenhuma conta encontrada" : "No accounts found"}</strong></div> : visibleProfiles.map((profile) => {
@@ -4442,9 +4457,12 @@ function LoyaltyPointsManager({
           return <article key={profile.uid}>
             <div className="influencer-profile-identity"><span>{(profile.name || profile.email).slice(0, 1).toUpperCase()}</span><div><strong>{profile.name || (lang === "pt" ? "Conta sem nome" : "Unnamed account")}</strong><small>{profile.email}</small></div></div>
             <div className="loyalty-admin-balance"><span>{lang === "pt" ? "Saldo atual" : "Current balance"}</span><strong>{points} {lang === "pt" ? "pontos" : "points"}</strong></div>
-            <form className="loyalty-admin-grant" onSubmit={(event) => { event.preventDefault(); void addPoints(profile); }}>
-              <label><span>{lang === "pt" ? "Pontos a adicionar" : "Points to add"}</span><input type="number" min="1" max="1000000" step="1" inputMode="numeric" value={draft} onChange={(event) => { setDrafts((current) => ({ ...current, [profile.uid]: event.target.value })); setMessage(""); }} placeholder="100" disabled={savingUid !== null} required /></label>
-              <button className="ghost-button influencer-save" type="submit" disabled={savingUid !== null || !draft}><Plus size={15} />{savingUid === profile.uid ? (lang === "pt" ? "A adicionar..." : "Adding...") : (lang === "pt" ? "Adicionar" : "Add")}</button>
+            <form className="loyalty-admin-grant" onSubmit={(event) => { event.preventDefault(); void changePoints(profile, "add"); }}>
+              <label><span>{lang === "pt" ? "Quantidade de pontos" : "Points amount"}</span><input type="number" min="1" max="1000000" step="1" inputMode="numeric" value={draft} onChange={(event) => { setDrafts((current) => ({ ...current, [profile.uid]: event.target.value })); setMessage(""); }} placeholder="100" disabled={savingUid !== null} required /></label>
+              <div className="loyalty-admin-actions">
+                <button className="ghost-button influencer-save" type="submit" disabled={savingUid !== null || !draft}><Plus size={15} />{savingUid === profile.uid ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Adicionar" : "Add")}</button>
+                <button className="ghost-button loyalty-remove-points" type="button" disabled={savingUid !== null || !draft || points === 0 || Number(draft) > points} onClick={() => void changePoints(profile, "remove")}><Minus size={15} />{lang === "pt" ? "Remover" : "Remove"}</button>
+              </div>
             </form>
           </article>;
         })}
