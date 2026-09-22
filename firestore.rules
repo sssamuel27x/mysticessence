@@ -171,6 +171,7 @@ service cloud.firestore {
 
       match /loyaltyHistory/{entryId} {
         allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+        // Saldos e movimentos, incluindo ajustes do administrador, só podem ser alterados pelas funções protegidas do servidor.
         allow create, update, delete: if false;
       }
 
