@@ -12,6 +12,7 @@ import {
 const functionsSource = readFileSync(new URL("../functions/index.js", import.meta.url), "utf8");
 const rulesSource = readFileSync(new URL("../firestore.rules", import.meta.url), "utf8");
 const pageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+const firebaseSource = readFileSync(new URL("../app/firebase.ts", import.meta.url), "utf8");
 
 test("loyalty rewards match the Mystic Rewards tiers", () => {
   assert.deepEqual(LOYALTY_REWARDS.map(({ points, kind, value, gift = false }) => ({ points, kind, value, gift })), [
@@ -50,8 +51,22 @@ test("only an admin can grant arbitrary positive points and every grant is audit
   assert.match(functionsSource, /kind: "admin_grant"/);
   assert.match(functionsSource, /transaction\.create\(historyRef/);
   assert.match(functionsSource, /loyaltyPoints: currentPoints \+ points/);
-  assert.match(pageSource, /Adicionar pontos/);
+  assert.match(pageSource, /Gerir pontos/);
   assert.match(pageSource, /grantLoyaltyPoints/);
+});
+
+test("only an admin can remove points, never below zero, and every removal is audited", () => {
+  assert.match(functionsSource, /exports\.removeLoyaltyPoints = onCall/);
+  assert.match(functionsSource, /exports\.removeLoyaltyPoints[\s\S]*requireAdmin\(request\)/);
+  assert.match(functionsSource, /if \(points > currentBalance\)/);
+  assert.match(functionsSource, /const balance = currentBalance - points/);
+  assert.match(functionsSource, /kind: "admin_deduction"/);
+  assert.match(functionsSource, /points: -points/);
+  assert.match(functionsSource, /transaction\.create\(historyRef/);
+  assert.match(firebaseSource, /"removeLoyaltyPoints"/);
+  assert.match(pageSource, /removeLoyaltyPoints/);
+  assert.match(pageSource, /Remover/);
+  assert.match(rulesSource, /match \/loyaltyHistory\/\{entryId\}[\s\S]*allow create, update, delete: if false/);
 });
 
 test("profile and checkout expose simple reward controls", () => {
