@@ -1011,6 +1011,41 @@ exports.grantLoyaltyPoints = onCall(callableOptions, async (request) => {
   });
 });
 
+exports.removeLoyaltyPoints = onCall(callableOptions, async (request) => {
+  requireAdmin(request);
+  const { normalizeLoyaltyPoints } = await import("./loyalty.mjs");
+  const uid = text(request.data?.uid, 128);
+  const points = Number(request.data?.points);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new HttpsError("invalid-argument", "Conta inválida.");
+  if (!Number.isInteger(points) || points < 1 || points > 1000000) {
+    throw new HttpsError("invalid-argument", "Indique uma quantidade inteira entre 1 e 1 000 000 pontos.");
+  }
+
+  const profileRef = db.collection("profiles").doc(uid);
+  const historyRef = profileRef.collection("loyaltyHistory").doc(`admin-remove-${randomUUID()}`);
+  const now = new Date().toISOString();
+  return db.runTransaction(async (transaction) => {
+    const profileSnapshot = await transaction.get(profileRef);
+    if (!profileSnapshot.exists) throw new HttpsError("not-found", "Esta conta já não existe.");
+    const currentBalance = normalizeLoyaltyPoints(profileSnapshot.data().loyaltyPoints);
+    if (points > currentBalance) {
+      throw new HttpsError("failed-precondition", `Esta conta só tem ${currentBalance} pontos disponíveis.`);
+    }
+    const balance = currentBalance - points;
+    transaction.set(profileRef, { loyaltyPoints: balance, loyaltyUpdatedAt: now }, { merge: true });
+    transaction.create(historyRef, {
+      customerUid: uid,
+      kind: "admin_deduction",
+      status: "completed",
+      points: -points,
+      note: "Removidos manualmente pela Mystic Essence",
+      adminUid: request.auth.uid,
+      createdAt: now,
+    });
+    return { uid, points, balance };
+  });
+});
+
 exports.submitReview = onCall(callableOptions, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Inicie sessão para avaliar este produto.");
 
