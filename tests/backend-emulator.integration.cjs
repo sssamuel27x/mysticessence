@@ -16,7 +16,7 @@ const buyer = { uid: 'backend-audit-buyer', token: { email: 'buyer@example.inval
 const request = () => ({ auth: buyer, rawRequest: { ip: '127.0.0.1' }, data: {
   attemptId: require('node:crypto').randomUUID(),
   termsAccepted: true,
-  termsVersion: '2026-09-10',
+  termsVersion: '2026-09-30',
   paymentMethod: 'mbway', customer: { name: '<img src=x onerror=alert(1)>', email: 'buyer@example.invalid', phone: '912345678', address: 'Audit address', postal: '1000-001', city: 'Lisboa' },
   billing: { sameAsContact: true }, items: [{ productId: 'backend-audit', volume: '100ml', quantity: 1 }],
 } });
@@ -91,8 +91,8 @@ test('paid checkout redeems 750 points, adds the surprise gift and earns points 
   const orderRef = db.doc(`orders/${result.orderId}`);
   const before = await orderRef.get();
   const pendingOrder = before.data();
-  assert.equal(result.amount, 90);
-  assert.equal(pendingOrder.loyaltyDiscountAmount, 10);
+  assert.equal(result.amount, 95);
+  assert.equal(pendingOrder.loyaltyDiscountAmount, 5);
   assert.equal(pendingOrder.loyaltyPointsSpent, 750);
   assert.equal(pendingOrder.items.at(-1).loyaltyGift, true);
   assert.equal((await db.doc(`profiles/${loyaltyBuyer.uid}`).get()).data().loyaltyPoints, 0);
@@ -104,9 +104,9 @@ test('paid checkout redeems 750 points, adds the surprise gift and earns points 
   await f.notifyCustomerOfPayment.run(event);
   await f.notifyCustomerOfPayment.run(event);
   const profile = (await db.doc(`profiles/${loyaltyBuyer.uid}`).get()).data();
-  assert.equal(profile.loyaltyPoints, 90);
-  assert.equal(profile.loyaltyLifetimePoints, 90);
-  assert.equal((await db.doc(`profiles/${loyaltyBuyer.uid}/loyaltyHistory/earn-${result.orderId}`).get()).data().points, 90);
+  assert.equal(profile.loyaltyPoints, 95);
+  assert.equal(profile.loyaltyLifetimePoints, 95);
+  assert.equal((await db.doc(`profiles/${loyaltyBuyer.uid}/loyaltyHistory/earn-${result.orderId}`).get()).data().points, 95);
   assert.equal((await db.doc(`profiles/${loyaltyBuyer.uid}/loyaltyHistory/redeem-${result.orderId}`).get()).data().status, 'completed');
   const customerEmail = (await db.doc(`mail/order-${result.orderId}-paid`).get()).data().message.html;
   const ownerEmail = (await db.doc(`mail/order-${result.orderId}-owner-paid`).get()).data().message.html;

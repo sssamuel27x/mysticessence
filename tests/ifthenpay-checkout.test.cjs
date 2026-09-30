@@ -11,7 +11,7 @@ function checkoutRequest(phone, paymentMethod = "mbway") {
   return { rawRequest: { ip: '127.0.0.1' }, data: {
     attemptId: require('node:crypto').randomUUID(),
     termsAccepted: true,
-    termsVersion: "2026-09-10",
+    termsVersion: "2026-09-30",
     paymentMethod,
     customer: {
       name: "Checkout Test", email: "checkout@example.invalid", phone,
@@ -224,7 +224,7 @@ for (const phone of ["912345678", "912 345 678", "+351 912 345 678", "00351 9123
     assert.equal(result.requestId, "test-request");
     assert.equal(state.documents.get(`orders/${result.orderId}`).paymentInitiated, true);
     assert.equal(state.documents.get(`orders/${result.orderId}`).termsAccepted, true);
-    assert.equal(state.documents.get(`orders/${result.orderId}`).termsVersion, "2026-09-10");
+    assert.equal(state.documents.get(`orders/${result.orderId}`).termsVersion, "2026-09-30");
     assert.match(state.documents.get(`orders/${result.orderId}`).termsAcceptedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(state.documents.get("products/test-perfume").variants[0].stock, 3);
   });

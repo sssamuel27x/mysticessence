@@ -17,18 +17,18 @@ const firebaseSource = readFileSync(new URL("../app/firebase.ts", import.meta.ur
 test("loyalty rewards match the Mystic Rewards tiers", () => {
   assert.deepEqual(LOYALTY_REWARDS.map(({ points, kind, value, gift = false }) => ({ points, kind, value, gift })), [
     { points: 100, kind: "fixed", value: 5, gift: false },
-    { points: 200, kind: "fixed", value: 12, gift: false },
-    { points: 350, kind: "fixed", value: 20, gift: false },
-    { points: 500, kind: "fixed", value: 30, gift: false },
-    { points: 750, kind: "percentage", value: 10, gift: true },
+    { points: 200, kind: "fixed", value: 10, gift: false },
+    { points: 350, kind: "fixed", value: 15, gift: false },
+    { points: 500, kind: "fixed", value: 20, gift: false },
+    { points: 750, kind: "percentage", value: 5, gift: true },
   ]);
 });
 
 test("points use complete euros and discounts never exceed the product subtotal", () => {
   assert.equal(loyaltyPointsForAmount(49.99), 49);
   assert.equal(loyaltyPointsForAmount(0.99), 0);
-  assert.equal(loyaltyDiscountForSubtotal(loyaltyRewardById("points-200"), 30), 12);
-  assert.equal(loyaltyDiscountForSubtotal(loyaltyRewardById("points-750"), 99.99), 10);
+  assert.equal(loyaltyDiscountForSubtotal(loyaltyRewardById("points-200"), 30), 10);
+  assert.equal(loyaltyDiscountForSubtotal(loyaltyRewardById("points-750"), 99.99), 5);
   assert.equal(loyaltyDiscountForSubtotal(loyaltyRewardById("points-100"), 3), 3);
   assert.equal(normalizeLoyaltyPoints(-10), 0);
   assert.equal(loyaltyRewardById("unknown"), null);
