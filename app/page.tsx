@@ -3326,7 +3326,7 @@ function AccountPage({
               const unlocked = loyaltyPoints >= reward.points;
               const rewardLabel = reward.kind === "fixed"
                 ? (lang === "pt" ? `${price(reward.value, lang)} de desconto` : `${price(reward.value, lang)} off`)
-                : (lang === "pt" ? `${reward.value}% + perfume surpresa` : `${reward.value}% + surprise perfume`);
+                : (lang === "pt" ? `Perfume surpresa + ${reward.value}% de desconto` : `Surprise perfume + ${reward.value}% off`);
               return <article className={unlocked ? "unlocked" : ""} key={reward.id}>
                 <span>{reward.gift ? <Gift size={18} /> : <TicketPercent size={18} />}{reward.points} {lang === "pt" ? "pontos" : "points"}</span>
                 <strong>{rewardLabel}</strong>
@@ -4972,7 +4972,9 @@ function CheckoutPage({
                   const hasMinimum = reward.kind !== "fixed" || subtotal >= reward.value;
                   const benefit = reward.kind === "fixed"
                     ? `${price(reward.value, lang)} ${lang === "pt" ? "de desconto" : "off"}`
-                    : `${reward.value}% + ${lang === "pt" ? "perfume surpresa" : "surprise perfume"}`;
+                    : lang === "pt"
+                      ? `perfume surpresa + ${reward.value}% de desconto`
+                      : `surprise perfume + ${reward.value}% off`;
                   const reason = !hasPoints
                     ? (lang === "pt" ? ` — faltam ${reward.points - loyaltyPoints}` : ` — ${reward.points - loyaltyPoints} needed`)
                     : !hasMinimum
@@ -5043,10 +5045,10 @@ function CheckoutPage({
           </header>
           <div className="loyalty-rules-image">
             <Image
-              src="/mystic-rewards-rules.png"
+              src="/mystic-rewards-rules.jpg"
               alt={lang === "pt" ? "Programa de pontos Mystic Essence: 1 euro vale 1 ponto, com recompensas de 100, 200, 350, 500 e 750 pontos." : "Mystic Essence points programme: 1 euro earns 1 point, with rewards at 100, 200, 350, 500 and 750 points."}
               width={1024}
-              height={1536}
+              height={1109}
               sizes="(max-width: 720px) calc(100vw - 32px), 620px"
             />
           </div>
