@@ -1,1 +1,1 @@
-export const CHECKOUT_TERMS_VERSION = "2026-09-10";
+export const CHECKOUT_TERMS_VERSION = "2026-09-30";

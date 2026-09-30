@@ -1,9 +1,9 @@
 export const LOYALTY_REWARDS = Object.freeze([
   Object.freeze({ id: "points-100", points: 100, kind: "fixed", value: 5 }),
-  Object.freeze({ id: "points-200", points: 200, kind: "fixed", value: 12 }),
-  Object.freeze({ id: "points-350", points: 350, kind: "fixed", value: 20 }),
-  Object.freeze({ id: "points-500", points: 500, kind: "fixed", value: 30 }),
-  Object.freeze({ id: "points-750", points: 750, kind: "percentage", value: 10, gift: true }),
+  Object.freeze({ id: "points-200", points: 200, kind: "fixed", value: 10 }),
+  Object.freeze({ id: "points-350", points: 350, kind: "fixed", value: 15 }),
+  Object.freeze({ id: "points-500", points: 500, kind: "fixed", value: 20 }),
+  Object.freeze({ id: "points-750", points: 750, kind: "percentage", value: 5, gift: true }),
 ]);
 
 export function loyaltyRewardById(id) {
