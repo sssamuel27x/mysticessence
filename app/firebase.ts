@@ -257,7 +257,7 @@ export async function saveProductGroup<T extends { id: string }>(product: T, dec
     const reference = doc(database!, "products", product.id);
     const snapshot = await transaction.get(reference);
     const current = snapshot.exists() ? { ...snapshot.data(), id: snapshot.id } : null;
-    const revision = (value: object | null) => value && Object.fromEntries(["variants", "name", "price", "brand", "category", "audiences", "desc", "discount", "updatedAt"].map(key => [key, (value as Record<string, unknown>)[key] ?? null]));
+    const revision = (value: object | null) => value && Object.fromEntries(["variants", "name", "price", "brand", "category", "audiences", "desc", "discount", "promotionEndsAt", "brandPromotion", "updatedAt"].map(key => [key, (value as Record<string, unknown>)[key] ?? null]));
     if (comparable(revision(current)) !== comparable(revision(expected))) {
       throw new Error("O produto ou stock mudou entretanto. Reabra o editor antes de guardar.");
     }
@@ -417,6 +417,28 @@ export function watchProducts<T>(callback: (products: T[]) => void) {
 export async function saveProduct<T extends object>(id: string, product: T) {
   if (!database) throw new Error("Firebase não está configurado.");
   await setDoc(doc(database, "products", id), cleanData(product), { merge: true });
+}
+
+export async function saveBrandPromotionChanges(products: Array<{
+  id: string;
+  discount?: number | null;
+  promotionEndsAt?: string | null;
+  brandPromotion?: unknown;
+}>) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  const updatedAt = new Date().toISOString();
+  for (let offset = 0; offset < products.length; offset += 400) {
+    const batch = writeBatch(database);
+    products.slice(offset, offset + 400).forEach((product) => {
+      batch.set(doc(database!, "products", product.id), cleanData({
+        discount: product.discount ?? null,
+        promotionEndsAt: product.promotionEndsAt ?? null,
+        brandPromotion: product.brandPromotion ?? null,
+        updatedAt,
+      }), { merge: true });
+    });
+    await batch.commit();
+  }
 }
 
 export async function removeProduct(id: string) {

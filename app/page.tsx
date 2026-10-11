@@ -15,6 +15,7 @@ import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
+import { applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, removeBrandPromotion } from "./brand-promotions.mjs";
 import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
@@ -36,6 +37,7 @@ import {
   removeProduct as removeFirebaseProduct,
   saveCoupon as saveFirebaseCoupon,
   saveProductGroup,
+  saveBrandPromotionChanges,
   applyGlobalDecantPricing,
   requestPasswordReset,
   requestEmailVerification,
@@ -120,7 +122,7 @@ type View = "home" | "listing" | "product" | "checkout" | "account" | "favorites
 type ListingKind = "all" | "new" | "best" | "sale" | "decants" | "men" | "women" | "unisex" | "other";
 type ScentProfile = "fresh" | "fruity" | "floral" | "sweet" | "woody";
 type PaymentMethod = "mbway" | "multibanco" | "payshop" | "card";
-type Session = { uid: string; name: string; email: string; role: "customer" | "admin"; emailVerified?: boolean; isInfluencer?: boolean; influencerCouponCode?: string | null; loyaltyPoints?: number; loyaltyLifetimePoints?: number };
+type Session = { uid: string; name: string; email: string; role: "customer" | "admin"; emailVerified?: boolean; isInfluencer?: boolean; influencerCouponCode?: string | null; loyaltyPoints?: number; loyaltyLifetimePoints?: number; reviewProductIds?: string[] };
 type OrderStatus = "received" | "preparing" | "shipped" | "delivered";
 type TrackingCarrier = "ctt" | "via-direta";
 type ProductAudience = "men" | "women" | "unisex";
@@ -153,6 +155,14 @@ type Product = {
   price: number;
   discount?: number;
   promotionEndsAt?: string;
+  brandPromotion?: {
+    brand: string;
+    discount: number;
+    endsAt: string;
+    appliedAt: string;
+    previousDiscount: number | null;
+    previousEndsAt: string | null;
+  } | null;
   isDecant?: boolean;
   isGiftCard?: boolean;
   volume: string;
@@ -982,6 +992,9 @@ function asDecantProduct(product: Product): Product | null {
     isNew: false,
     bestSeller: false,
     isDecant: true,
+    discount: undefined,
+    promotionEndsAt: undefined,
+    brandPromotion: undefined,
   };
 }
 
@@ -1593,6 +1606,7 @@ function Storefront() {
             <WhatsAppConsultationBanner />
             <ScentProfiles lang={lang} onProfile={openProfile} />
             <BrandBand onBrand={openBrand} />
+            <GoogleReviewsSection lang={lang} />
           </>
         )}
 
@@ -2412,6 +2426,46 @@ function BrandBand({ onBrand }: { onBrand: (brand: string) => void }) {
   return (
     <section className="brand-band" aria-label="Featured brands">
       {brands.map((brand) => <button type="button" key={brandKey(brand)} onClick={() => onBrand(brand)}>{brand}</button>)}
+    </section>
+  );
+}
+
+const GOOGLE_REVIEWS_URL = "https://www.google.com/maps/search/?api=1&query=Mystic%20Essence%20Perfumaria%20%C3%81rabe%20Santa%20Maria%20da%20Feira";
+const GOOGLE_REVIEW_CARDS = [
+  { author: "Caio Kacurin", quote: "Só perfumes de qualidade." },
+  { author: "Mariana Dias", quote: "Experiência incrível. Óptimo atendimento." },
+  { author: "Tiago Sereno", quote: "Excelente seleção de perfumes árabes." },
+  { author: "Solange Beato", quote: "Atendimento de excelência." },
+];
+
+function GoogleReviewsSection({ lang }: { lang: Lang }) {
+  return (
+    <section className="google-reviews" aria-labelledby="google-reviews-title">
+      <header className="google-reviews-heading">
+        <div>
+          <span className="eyebrow">Google Reviews</span>
+          <h2 id="google-reviews-title">{lang === "pt" ? "A experiência de quem nos visita" : "The experience of those who visit us"}</h2>
+          <p>{lang === "pt" ? "Opiniões públicas deixadas por clientes na ficha Google da Mystic Essence." : "Public reviews left by customers on the Mystic Essence Google listing."}</p>
+        </div>
+        <a href={GOOGLE_REVIEWS_URL} target="_blank" rel="noreferrer" className="google-reviews-score" aria-label={lang === "pt" ? "Ver as 128 avaliações da Mystic Essence no Google" : "View Mystic Essence's 128 reviews on Google"}>
+          <span aria-hidden="true">G</span>
+          <strong>5,0</strong>
+          <div><ReviewStars rating={5} /><small>128 {lang === "pt" ? "avaliações" : "reviews"}</small></div>
+          <ChevronRight size={18} />
+        </a>
+      </header>
+      <div className="google-reviews-grid">
+        {GOOGLE_REVIEW_CARDS.map((review) => (
+          <article className="google-review-card" key={review.author}>
+            <ReviewStars rating={5} />
+            <blockquote>“{review.quote}”</blockquote>
+            <footer><span>{review.author.slice(0, 1)}</span><div><strong>{review.author}</strong><small>{lang === "pt" ? "Avaliação pública no Google" : "Public Google review"}</small></div></footer>
+          </article>
+        ))}
+      </div>
+      <a className="google-reviews-link" href={GOOGLE_REVIEWS_URL} target="_blank" rel="noreferrer">
+        {lang === "pt" ? "Ver todas as avaliações no Google" : "View all reviews on Google"}<ChevronRight size={17} />
+      </a>
     </section>
   );
 }
@@ -3581,6 +3635,12 @@ function AdminPage({
   const [loyaltyPointsOpen, setLoyaltyPointsOpen] = useState(false);
   const [shippingOpen, setShippingOpen] = useState(false);
   const [brandsOpen, setBrandsOpen] = useState(false);
+  const [brandPromotionsOpen, setBrandPromotionsOpen] = useState(false);
+  const [brandPromotionBrand, setBrandPromotionBrand] = useState("");
+  const [brandPromotionDiscount, setBrandPromotionDiscount] = useState("10");
+  const [brandPromotionEndsAt, setBrandPromotionEndsAt] = useState(toDateTimeInput());
+  const [brandPromotionError, setBrandPromotionError] = useState("");
+  const [brandPromotionMessage, setBrandPromotionMessage] = useState("");
   const [decantPricingOpen, setDecantPricingOpen] = useState(false);
   const [decantPricingRules, setDecantPricingRules] = useState<DecantPricingRule[]>(DEFAULT_DECANT_PRICING.map((rule) => ({ ...rule })));
   const [decantPricingError, setDecantPricingError] = useState("");
@@ -3617,6 +3677,7 @@ function AdminPage({
   const visibleOrders = showArchive ? archivedOrders : activeOrders;
   const inventoryProducts = products.filter((product) => !product.isDecant);
   const visibleProducts = filterAdminCatalogue(products, catalogQuery, catalogCategory, catalogHighlight);
+  const activeBrandPromotions = brandPromotionSummaries(inventoryProducts) as Array<{ brand: string; discount: number; endsAt: string; productCount: number }>;
 
   useEffect(() => {
     const previews = imagePreviewUrls.current;
@@ -4005,16 +4066,106 @@ function AdminPage({
     }
   }
 
+  function openBrandPromotions() {
+    const firstBrand = brands.find((brand) => inventoryProducts.some((product) => brandKey(product.brand) === brandKey(brand)))
+      ?? inventoryProducts[0]?.brand
+      ?? "";
+    setBrandPromotionBrand((current) => current || firstBrand);
+    setBrandPromotionEndsAt(toDateTimeInput());
+    setBrandPromotionError("");
+    setBrandPromotionMessage("");
+    setBrandPromotionsOpen(true);
+  }
+
+  async function saveBrandPromotion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (adminBusy) return;
+    setBrandPromotionError("");
+    setBrandPromotionMessage("");
+    const discount = Number(brandPromotionDiscount);
+    const endDate = new Date(brandPromotionEndsAt);
+    const matchingProducts = inventoryProducts.filter((product) => brandKey(product.brand) === brandKey(brandPromotionBrand));
+    if (!brandPromotionBrand || matchingProducts.length === 0) {
+      setBrandPromotionError(lang === "pt" ? "Escolha uma marca que tenha produtos no catálogo." : "Choose a brand with products in the catalogue.");
+      return;
+    }
+    if (!Number.isInteger(discount) || discount < 1 || discount > 95) {
+      setBrandPromotionError(lang === "pt" ? "Indique um desconto inteiro entre 1% e 95%." : "Enter a whole discount between 1% and 95%.");
+      return;
+    }
+    if (Number.isNaN(endDate.getTime()) || endDate.getTime() <= Date.now()) {
+      setBrandPromotionError(lang === "pt" ? "Escolha uma data futura para terminar a promoção." : "Choose a future end date.");
+      return;
+    }
+    const updated = applyBrandPromotion(products, brandPromotionBrand, discount, endDate.toISOString()) as Product[];
+    const changes = brandPromotionChanges(products, updated) as Product[];
+    setAdminBusy(true);
+    try {
+      if (firebaseEnabled) await saveBrandPromotionChanges(changes);
+      setProducts(updated);
+      setBrandPromotionMessage(lang === "pt"
+        ? `Promoção de ${discount}% aplicada a ${matchingProducts.length} produto(s) da ${brandPromotionBrand}.`
+        : `${discount}% promotion applied to ${matchingProducts.length} ${brandPromotionBrand} product(s).`);
+    } catch (error) {
+      setBrandPromotionError(adminSaveError(error, lang));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function endBrandPromotion(brand: string) {
+    if (adminBusy) return;
+    setBrandPromotionError("");
+    setBrandPromotionMessage("");
+    const updated = removeBrandPromotion(products, brand) as Product[];
+    const changes = brandPromotionChanges(products, updated) as Product[];
+    setAdminBusy(true);
+    try {
+      if (firebaseEnabled) await saveBrandPromotionChanges(changes);
+      setProducts(updated);
+      setBrandPromotionMessage(lang === "pt"
+        ? `A promoção da ${brand} terminou e os descontos anteriores foram repostos.`
+        : `${brand}'s promotion ended and previous discounts were restored.`);
+    } catch (error) {
+      setBrandPromotionError(adminSaveError(error, lang));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   return (
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoção por marca" : "Brand promotion"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <RevokeSessionsButton lang={lang} disabled={adminBusy} />
       {shippingOpen && <ShippingSettingsDialog lang={lang} onClose={() => setShippingOpen(false)} />}
       {brandsOpen && <BrandSettingsDialog lang={lang} onClose={() => setBrandsOpen(false)} onCreated={editorOpen ? (brand) => { setDraft((current) => ({ ...current, brand })); setBrandsOpen(false); } : undefined} />}
+      {brandPromotionsOpen && <>
+        <button className="modal-backdrop" onClick={() => !adminBusy && setBrandPromotionsOpen(false)} aria-label={copy.cancel} />
+        <form className="brand-promotion-manager" onSubmit={saveBrandPromotion} role="dialog" aria-modal="true" aria-labelledby="brand-promotion-title">
+          <header><div><TicketPercent size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="brand-promotion-title">{lang === "pt" ? "Promoções por marca" : "Brand promotions"}</h2></div></div><button type="button" onClick={() => setBrandPromotionsOpen(false)} disabled={adminBusy} aria-label={copy.cancel}><X size={20} /></button></header>
+          <p className="brand-promotion-intro">{lang === "pt" ? "Aplique o mesmo desconto a todos os frascos de uma marca. Os decants ficam de fora e as promoções individuais anteriores são repostas quando terminar a campanha." : "Apply the same discount to every full bottle from a brand. Decants are excluded and previous individual promotions are restored when the campaign ends."}</p>
+          <div className="brand-promotion-fields">
+            <label><span>{lang === "pt" ? "Marca" : "Brand"}</span><select value={brandPromotionBrand} onChange={(event) => setBrandPromotionBrand(event.target.value)}>{brands.filter((brand) => inventoryProducts.some((product) => brandKey(product.brand) === brandKey(brand))).map((brand) => <option key={brandKey(brand)} value={brand}>{brand}</option>)}</select></label>
+            <label><span>{lang === "pt" ? "Desconto" : "Discount"}</span><div className="brand-promotion-percent"><input type="number" min="1" max="95" step="1" value={brandPromotionDiscount} onChange={(event) => setBrandPromotionDiscount(event.target.value)} /><b>%</b></div></label>
+            <label><span>{lang === "pt" ? "Termina em" : "Ends at"}</span><input type="datetime-local" value={brandPromotionEndsAt} onChange={(event) => setBrandPromotionEndsAt(event.target.value)} /></label>
+          </div>
+          <p className="brand-promotion-count"><BadgeCheck size={17} />{lang === "pt" ? `${inventoryProducts.filter((product) => brandKey(product.brand) === brandKey(brandPromotionBrand)).length} produto(s) serão atualizados.` : `${inventoryProducts.filter((product) => brandKey(product.brand) === brandKey(brandPromotionBrand)).length} product(s) will be updated.`}</p>
+          <button className="primary-button brand-promotion-submit" type="submit" disabled={adminBusy}>{adminBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Ativar promoção da marca" : "Activate brand promotion")}</button>
+          <section className="brand-promotion-active" aria-labelledby="brand-promotion-active-title">
+            <h3 id="brand-promotion-active-title">{lang === "pt" ? "Campanhas configuradas" : "Configured campaigns"}</h3>
+            {activeBrandPromotions.length === 0 ? <p>{lang === "pt" ? "Ainda não existem promoções por marca." : "There are no brand promotions yet."}</p> : activeBrandPromotions.map((campaign) => <article key={brandKey(campaign.brand)}>
+              <div><strong>{campaign.brand}</strong><span>-{campaign.discount}% · {campaign.productCount} {lang === "pt" ? "produto(s)" : "product(s)"}</span><small>{new Date(campaign.endsAt).getTime() > Date.now() ? `${lang === "pt" ? "Até" : "Until"} ${new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(campaign.endsAt))}` : (lang === "pt" ? "Campanha expirada" : "Campaign expired")}</small></div>
+              <button className="ghost-button" type="button" disabled={adminBusy} onClick={() => void endBrandPromotion(campaign.brand)}><Minus size={16} />{lang === "pt" ? "Terminar" : "End"}</button>
+            </article>)}
+          </section>
+          {brandPromotionError && <p className="auth-error" role="alert">{brandPromotionError}</p>}
+          {brandPromotionMessage && <p className="brand-promotion-success" role="status">{brandPromotionMessage}</p>}
+        </form>
+      </>}
       {decantPricingOpen && <>
         <button className="modal-backdrop" onClick={() => setDecantPricingOpen(false)} aria-label={copy.cancel} />
         <form className="decant-pricing-manager" onSubmit={applyGlobalDecantRules} role="dialog" aria-modal="true" aria-labelledby="decant-pricing-title">
