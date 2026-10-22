@@ -36,11 +36,19 @@ service cloud.firestore {
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['trackingNumber', 'trackingCarrier'])
           || request.resource.data.status == 'shipped')
         && (request.resource.data.status != 'shipped' || (
-          request.resource.data.keys().hasAll(['trackingNumber', 'trackingCarrier'])
-          && request.resource.data.trackingNumber is string
-          && request.resource.data.trackingNumber.size() > 0
-          && request.resource.data.trackingNumber.size() <= 100
-          && request.resource.data.trackingCarrier in ['ctt', 'via-direta']
+          // Store pickup uses the shipped state as "ready for pickup" and has
+          // no carrier or tracking code. The delivery method itself cannot be
+          // changed by this rule, so an admin cannot turn another order into a
+          // pickup order to bypass tracking validation.
+          (('deliveryMethod' in resource.data && resource.data.deliveryMethod == 'store_pickup')
+            || ('shippingCarrierId' in resource.data && resource.data.shippingCarrierId == 'store-pickup'))
+          || (
+            request.resource.data.keys().hasAll(['trackingNumber', 'trackingCarrier'])
+            && request.resource.data.trackingNumber is string
+            && request.resource.data.trackingNumber.size() > 0
+            && request.resource.data.trackingNumber.size() <= 100
+            && request.resource.data.trackingCarrier in ['ctt', 'via-direta']
+          )
         ));
       allow delete: if false;
     }
