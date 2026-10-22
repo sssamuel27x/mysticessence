@@ -161,6 +161,22 @@ test('admin fulfillment persists but cannot rewrite payment or customer ownershi
   await denied(updateDoc(doc(admin.db, 'orders/alice-order'), { total: 0 }));
   await denied(updateDoc(doc(admin.db, 'orders/alice-order'), { customerUid: bob.uid }));
 });
+test('store pickup can become ready without fake tracking data', async () => {
+  await server.doc('orders/pickup-order').set({
+    customerUid: alice.uid,
+    paymentStatus: 'paid',
+    status: 'received',
+    deliveryMethod: 'store_pickup',
+    shippingCarrierId: 'store-pickup',
+    total: 25,
+  });
+  await updateDoc(doc(admin.db, 'orders/pickup-order'), { status: 'shipped', updatedAt: '2026-10-22T12:00:00.000Z' });
+  const pickupOrder = (await getDocFromServer(doc(alice.db, 'orders/pickup-order'))).data();
+  assert.equal(pickupOrder.status, 'shipped');
+  assert.equal(pickupOrder.trackingNumber, undefined);
+  assert.equal(pickupOrder.trackingCarrier, undefined);
+  await denied(updateDoc(doc(admin.db, 'orders/pickup-order'), { deliveryMethod: 'shipping', status: 'shipped' }));
+});
 test('catalogue create, edit and deletion persist on fresh public reads', async () => {
   await roundtrip(admin, guest, 'products/audit', { name: { pt: 'Audit perfume' }, price: 25, variants: [] });
   await roundtrip(admin, guest, 'products/audit', { name: { pt: 'Updated' }, price: 30, variants: [] });
