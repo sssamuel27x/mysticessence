@@ -31,6 +31,7 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import { getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
 import { validateProductImageFiles } from "./product-gallery";
+import { normalizeHomeHeroImages, validateHomeHeroImageFiles, type HomeHeroImage } from "./home-hero";
 import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
 import { brandKey } from "./brand-catalogue";
 import { DEFAULT_DECANT_PRICING, isValidDecantPricing, normalizeDecantPricing, type DecantPricingRule } from "../functions/decant-pricing.mjs";
@@ -468,6 +469,33 @@ export async function uploadProductImage(productId: string, file: File) {
   const imageRef = ref(storage, `products/${productId}/${crypto.randomUUID()}.${extension}`);
   await uploadBytes(imageRef, file, { contentType: file.type });
   return { imageUrl: await getDownloadURL(imageRef), imagePath: imageRef.fullPath };
+}
+
+export function watchHomeHeroImages(callback: (images: HomeHeroImage[]) => void, onError: (error: Error) => void) {
+  if (!database) {
+    callback([]);
+    return () => undefined;
+  }
+  return onSnapshot(doc(database, "settings", "homeHero"), (snapshot) => {
+    callback(snapshot.exists() ? normalizeHomeHeroImages(snapshot.data().images) : []);
+  }, onError);
+}
+
+export async function uploadHomeHeroImage(file: File): Promise<HomeHeroImage> {
+  if (!storage || !storageEnabled) throw new Error("O envio de imagens será ativado quando o Firebase Storage estiver disponível.");
+  if (validateHomeHeroImageFiles([file], 0)) throw new Error("Escolha uma imagem JPG, PNG ou WebP com menos de 5 MB.");
+  const extension = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const id = crypto.randomUUID();
+  const imageRef = ref(storage, `home-highlights/${id}.${extension}`);
+  await uploadBytes(imageRef, file, { contentType: file.type });
+  return { id, imageUrl: await getDownloadURL(imageRef), imagePath: imageRef.fullPath };
+}
+
+export async function saveHomeHeroImages(images: HomeHeroImage[]) {
+  if (!database) throw new Error("Firebase não está configurado.");
+  const normalized = normalizeHomeHeroImages(images);
+  if (normalized.length === 0 || normalized.length !== images.length) throw new Error("Escolha entre 1 e 6 imagens válidas.");
+  await setDoc(doc(database, "settings", "homeHero"), { images: cleanData(normalized), updatedAt: new Date().toISOString() });
 }
 
 export function watchOrders<T>(session: FirebaseSession, callback: (orders: T[]) => void) {

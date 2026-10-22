@@ -187,6 +187,7 @@ for (const [path, data] of [
   ['brands/audit', { name: 'Audit' }],
   ['settings/decants', { rules: [{ id: 'rule', minPrice: 0, maxPrice: 50, size: 2, price: 1.9 }] }],
   ['settings/decantAvailability', { blockedSizes: [2, 10] }],
+  ['settings/homeHero', { images: [{ id: 'store', imageUrl: '/store.webp' }, { id: 'news', imageUrl: 'https://example.invalid/news.webp', imagePath: 'home-highlights/news.webp' }], updatedAt: '2026-10-22T12:00:00.000Z' }],
 ]) {
   test(`${path}: admin writes persist; public and customer writes fail`, async () => {
     await roundtrip(admin, guest, path, data);
@@ -244,6 +245,9 @@ test('images upload only for admin and persist as exact bytes', async () => {
   const data = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   await uploadBytes(ref(admin.storage, 'products/audit/image.png'), data, { contentType: 'image/png' });
   assert.deepEqual(new Uint8Array(await getBytes(ref(guest.storage, 'products/audit/image.png'))), data);
+  await uploadBytes(ref(admin.storage, 'home-highlights/feature.png'), data, { contentType: 'image/png' });
+  assert.deepEqual(new Uint8Array(await getBytes(ref(guest.storage, 'home-highlights/feature.png'))), data);
   for (const c of [guest, alice]) await denied(uploadBytes(ref(c.storage, 'products/audit/attack.png'), data, { contentType: 'image/png' }));
+  for (const c of [guest, alice]) await denied(uploadBytes(ref(c.storage, 'home-highlights/attack.png'), data, { contentType: 'image/png' }));
   await denied(uploadBytes(ref(admin.storage, 'products/audit/attack.svg'), new TextEncoder().encode('<svg onload="alert(1)"/>'), { contentType: 'image/svg+xml' }));
 });

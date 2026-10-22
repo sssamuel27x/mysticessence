@@ -85,6 +85,36 @@ service cloud.firestore {
         && (rate.carriers.size() <= 9 || validShippingCarrier(rate.carriers[9]));
     }
 
+    function validHomeHeroImage(image) {
+      return image is map
+        && image.keys().hasAll(['id', 'imageUrl'])
+        && image.keys().hasOnly(['id', 'imageUrl', 'imagePath'])
+        && image.id is string && image.id.matches('^[a-zA-Z0-9_-]{1,80}$')
+        && image.imageUrl is string && image.imageUrl.size() > 0 && image.imageUrl.size() <= 2048
+        && (!('imagePath' in image) || (
+          image.imagePath is string
+          && image.imagePath.matches('^home-highlights/[a-zA-Z0-9._-]{1,180}$')
+        ));
+    }
+
+    match /settings/homeHero {
+      allow read: if true;
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasAll(['images', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['images', 'updatedAt'])
+        && request.resource.data.updatedAt is string
+        && request.resource.data.images is list
+        && request.resource.data.images.size() > 0
+        && request.resource.data.images.size() <= 6
+        && validHomeHeroImage(request.resource.data.images[0])
+        && (request.resource.data.images.size() <= 1 || validHomeHeroImage(request.resource.data.images[1]))
+        && (request.resource.data.images.size() <= 2 || validHomeHeroImage(request.resource.data.images[2]))
+        && (request.resource.data.images.size() <= 3 || validHomeHeroImage(request.resource.data.images[3]))
+        && (request.resource.data.images.size() <= 4 || validHomeHeroImage(request.resource.data.images[4]))
+        && (request.resource.data.images.size() <= 5 || validHomeHeroImage(request.resource.data.images[5]));
+      allow delete: if false;
+    }
+
     match /settings/shipping {
       allow read: if true;
       allow create, update: if isAdmin()

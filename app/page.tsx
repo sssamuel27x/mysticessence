@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { PRODUCT_IMAGE_IDS } from "./product-images";
 import { getProductImages, productImageFields, validateProductImageFiles, MAX_PRODUCT_IMAGES, type ProductImage } from "./product-gallery";
+import { DEFAULT_HOME_HERO_IMAGES, MAX_HOME_HERO_IMAGES, normalizeHomeHeroImages, validateHomeHeroImageFiles, type HomeHeroImage } from "./home-hero";
 import { LEGAL_DOCUMENTS, type LegalKind } from "./legal-content";
 import { ShippingSettingsProvider, ShippingSettingsDialog, useShippingSettings } from "./shipping-settings";
 import { DecantAvailabilityProvider, DecantAvailabilityControls, useDecantAvailability } from "./decant-availability";
@@ -45,17 +46,20 @@ import {
   reconcilePayment,
   releaseCancelledPayment,
   saveFavoriteFolders,
+  saveHomeHeroImages,
   setInfluencerAccount,
   seedProducts,
   submitReview as submitFirebaseReview,
   subscribeToRestock,
   updateOrder as updateFirebaseOrder,
   uploadProductImage,
+  uploadHomeHeroImage,
   validateCoupon,
   watchCoupons,
   watchDecantPricing,
   watchFavoriteFolders,
   watchGiftCards,
+  watchHomeHeroImages,
   watchInfluencerCouponUses,
   watchLoyaltyHistory,
   watchOrders,
@@ -200,6 +204,7 @@ const GIFT_CARD_PRODUCT: Product = {
 };
 
 type DraftProductImage = ProductImage & { id: string; file?: File };
+type DraftHomeHeroImage = HomeHeroImage & { file?: File };
 type DraftVariant = { id: string; volume: string; price: string; isDecant: boolean; stock: string; soldout: boolean };
 
 type ListingFilters = {
@@ -1214,6 +1219,7 @@ function Storefront() {
   const [cookieChoice, setCookieChoice] = useState<"accepted" | "rejected" | null>(null);
   const [cookiePanelOpen, setCookiePanelOpen] = useState(false);
   const [rawCatalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [homeHeroImages, setHomeHeroImages] = useState<HomeHeroImage[]>(DEFAULT_HOME_HERO_IMAGES);
   const { blockedSizes, ready: decantsReady, error: decantsError } = useDecantAvailability();
   const catalog = useMemo(() => rawCatalog.map((product) => applyDecantAvailability(product, blockedSizes)), [rawCatalog, blockedSizes]);
   const [session, setSession] = useState<Session | null>(null);
@@ -1368,6 +1374,14 @@ function Storefront() {
         }));
     });
   }, []);
+
+  useEffect(() => {
+    if (!firebaseEnabled) return;
+    return watchHomeHeroImages(
+      (images) => setHomeHeroImages(images.length ? images : DEFAULT_HOME_HERO_IMAGES),
+      () => setSyncError(lang === "pt" ? "Não foi possível carregar as imagens de destaque." : "Could not load the featured images."),
+    );
+  }, [lang]);
 
   useEffect(() => {
     if (!session || !firebaseEnabled) {
@@ -1597,7 +1611,7 @@ function Storefront() {
       <main>
         {view === "home" && (
           <>
-            <Hero t={t} lang={lang} />
+            <Hero t={t} lang={lang} images={homeHeroImages} />
             <DiscoveryCarousel products={catalog} lang={lang} onListing={openListing} />
             <div className="home-decant-feature">
               <DecantPromo lang={lang} />
@@ -1697,6 +1711,8 @@ function Storefront() {
             coupons={coupons}
             setCoupons={setCoupons}
             profiles={profiles}
+            homeHeroImages={homeHeroImages}
+            setHomeHeroImages={setHomeHeroImages}
             session={session}
             onShop={openHome}
             onLogout={handleLogout}
@@ -2017,8 +2033,30 @@ function BrandMega({ onBrand }: { onBrand: (brand: string) => void }) {
   );
 }
 
-function Hero({ t, lang }: { t: (typeof COPY)[Lang]; lang: Lang }) {
+function Hero({ t, lang, images }: { t: (typeof COPY)[Lang]; lang: Lang; images: HomeHeroImage[] }) {
   const { settings } = useShippingSettings();
+  const slides = normalizeHomeHeroImages(images);
+  const visibleSlides = slides.length ? slides : DEFAULT_HOME_HERO_IMAGES;
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [carouselPaused, setCarouselPaused] = useState(false);
+  const hasCarousel = visibleSlides.length > 1;
+
+  useEffect(() => {
+    setActiveSlide((current) => Math.min(current, visibleSlides.length - 1));
+  }, [visibleSlides.length]);
+
+  useEffect(() => {
+    if (!hasCarousel || carouselPaused) return;
+    const timer = window.setInterval(() => {
+      setActiveSlide((current) => (current + 1) % visibleSlides.length);
+    }, 5200);
+    return () => window.clearInterval(timer);
+  }, [hasCarousel, carouselPaused, visibleSlides.length]);
+
+  function moveSlide(direction: -1 | 1) {
+    setActiveSlide((current) => (current + direction + visibleSlides.length) % visibleSlides.length);
+  }
+
   const trustItems = lang === "pt"
     ? [
         { icon: Truck, title: "Envios rápidos", detail: "Portugal, ilhas e Espanha" },
@@ -2042,16 +2080,26 @@ function Hero({ t, lang }: { t: (typeof COPY)[Lang]; lang: Lang }) {
           <p>{t.heroSub}</p>
           <span className="hero-signoff">{lang === "pt" ? "Descobre a tua essência ideal na Mystic" : "Discover your ideal essence at Mystic"}</span>
         </div>
-        <div className="hero-stage">
-          <div className="hero-store-image">
-            <Image
-              src="/mystic-essence-store-saturated.png"
-              fill
-              sizes="(max-width: 940px) 100vw, 62vw"
-              alt="Interior da loja Mystic Essence em Santa Maria da Feira"
-              priority
-            />
+        <div className="hero-stage" onMouseEnter={() => setCarouselPaused(true)} onMouseLeave={() => setCarouselPaused(false)} onFocus={() => setCarouselPaused(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setCarouselPaused(false); }}>
+          <div className="hero-store-image" aria-roledescription={hasCarousel ? "carousel" : undefined} aria-label={lang === "pt" ? "Imagens em destaque da Mystic Essence" : "Mystic Essence featured images"}>
+            {visibleSlides.map((image, index) => <img
+              className={index === activeSlide ? "active" : ""}
+              key={image.id}
+              src={image.imageUrl}
+              alt={index === activeSlide ? (lang === "pt" ? `Destaque Mystic Essence ${index + 1}` : `Mystic Essence feature ${index + 1}`) : ""}
+              aria-hidden={index !== activeSlide}
+              loading={index === 0 ? "eager" : "lazy"}
+              fetchPriority={index === 0 ? "high" : "auto"}
+              decoding="async"
+            />)}
           </div>
+          {hasCarousel && <>
+            <button className="hero-carousel-arrow previous" type="button" onClick={() => moveSlide(-1)} aria-label={lang === "pt" ? "Fotografia anterior" : "Previous image"}><ChevronLeft size={24} /></button>
+            <button className="hero-carousel-arrow next" type="button" onClick={() => moveSlide(1)} aria-label={lang === "pt" ? "Fotografia seguinte" : "Next image"}><ChevronRight size={24} /></button>
+            <div className="hero-carousel-dots" aria-label={lang === "pt" ? "Escolher fotografia" : "Choose image"}>
+              {visibleSlides.map((image, index) => <button type="button" key={image.id} className={index === activeSlide ? "active" : ""} onClick={() => setActiveSlide(index)} aria-label={`${lang === "pt" ? "Fotografia" : "Image"} ${index + 1}`} aria-current={index === activeSlide ? "true" : undefined} />)}
+            </div>
+          </>}
           <span className="hero-image-caption">Santa Maria da Feira · Aveiro</span>
         </div>
       </div>
@@ -3589,6 +3637,8 @@ function AdminPage({
   coupons,
   setCoupons,
   profiles,
+  homeHeroImages,
+  setHomeHeroImages,
   session,
   onShop,
   onLogout,
@@ -3601,6 +3651,8 @@ function AdminPage({
   coupons: Coupon[];
   setCoupons: Dispatch<SetStateAction<Coupon[]>>;
   profiles: CustomerProfile[];
+  homeHeroImages: HomeHeroImage[];
+  setHomeHeroImages: Dispatch<SetStateAction<HomeHeroImage[]>>;
   session: Session;
   onShop: () => void;
   onLogout: () => Promise<void>;
@@ -3633,6 +3685,11 @@ function AdminPage({
   const [couponOpen, setCouponOpen] = useState(false);
   const [influencersOpen, setInfluencersOpen] = useState(false);
   const [loyaltyPointsOpen, setLoyaltyPointsOpen] = useState(false);
+  const [homeHeroOpen, setHomeHeroOpen] = useState(false);
+  const [homeHeroDraft, setHomeHeroDraft] = useState<DraftHomeHeroImage[]>([]);
+  const [homeHeroError, setHomeHeroError] = useState("");
+  const [homeHeroProgress, setHomeHeroProgress] = useState("");
+  const homeHeroPreviewUrls = useRef(new Set<string>());
   const [shippingOpen, setShippingOpen] = useState(false);
   const [brandsOpen, setBrandsOpen] = useState(false);
   const [brandPromotionsOpen, setBrandPromotionsOpen] = useState(false);
@@ -3685,6 +3742,11 @@ function AdminPage({
   }, []);
 
   useEffect(() => {
+    const previews = homeHeroPreviewUrls.current;
+    return () => { previews.forEach((url) => URL.revokeObjectURL(url)); };
+  }, []);
+
+  useEffect(() => {
     if (!firebaseEnabled) return;
     return watchDecantPricing(setDecantPricingRules, (error) => setDecantPricingError(error.message));
   }, []);
@@ -3695,6 +3757,94 @@ function AdminPage({
     setDraftImages([]);
     setImageError("");
     setUploadProgress("");
+  }
+
+  function clearHomeHeroPreviews() {
+    homeHeroPreviewUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    homeHeroPreviewUrls.current.clear();
+  }
+
+  function openHomeHeroManager() {
+    clearHomeHeroPreviews();
+    setHomeHeroDraft(homeHeroImages.map((image) => ({ ...image })));
+    setHomeHeroError("");
+    setHomeHeroProgress("");
+    setHomeHeroOpen(true);
+  }
+
+  function closeHomeHeroManager() {
+    if (adminBusy) return;
+    clearHomeHeroPreviews();
+    setHomeHeroDraft([]);
+    setHomeHeroError("");
+    setHomeHeroProgress("");
+    setHomeHeroOpen(false);
+  }
+
+  function addHomeHeroImages(files: File[]) {
+    if (!files.length || adminBusy) return;
+    const error = validateHomeHeroImageFiles(files, homeHeroDraft.length);
+    if (error) {
+      setHomeHeroError(error === "count"
+        ? (lang === "pt" ? `Pode guardar até ${MAX_HOME_HERO_IMAGES} fotografias nesta zona.` : `You can save up to ${MAX_HOME_HERO_IMAGES} images in this area.`)
+        : error === "type" ? (lang === "pt" ? "Escolha apenas imagens JPG, PNG ou WebP." : "Choose JPG, PNG or WebP images only.")
+        : (lang === "pt" ? "Cada imagem deve ter menos de 5 MB e não pode estar vazia." : "Each image must be under 5 MB and cannot be empty."));
+      return;
+    }
+    const additions = files.map((file) => {
+      const imageUrl = URL.createObjectURL(file);
+      homeHeroPreviewUrls.current.add(imageUrl);
+      return { id: crypto.randomUUID(), imageUrl, file };
+    });
+    setHomeHeroDraft((images) => [...images, ...additions]);
+    setHomeHeroError("");
+  }
+
+  function moveHomeHeroImage(index: number, direction: -1 | 1) {
+    setHomeHeroDraft((images) => {
+      const destination = index + direction;
+      if (destination < 0 || destination >= images.length) return images;
+      const reordered = [...images];
+      [reordered[index], reordered[destination]] = [reordered[destination], reordered[index]];
+      return reordered;
+    });
+  }
+
+  async function saveHomeHero(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (adminBusy) return;
+    if (homeHeroDraft.length === 0) {
+      setHomeHeroError(lang === "pt" ? "Mantenha pelo menos uma fotografia." : "Keep at least one image.");
+      return;
+    }
+    setAdminBusy(true);
+    setHomeHeroError("");
+    try {
+      const savedImages: HomeHeroImage[] = [];
+      const pendingUploads = homeHeroDraft.filter((image) => image.file).length;
+      let uploaded = 0;
+      for (const image of homeHeroDraft) {
+        let savedImage: HomeHeroImage = image;
+        if (image.file) {
+          setHomeHeroProgress(lang === "pt" ? `A enviar fotografia ${uploaded + 1} de ${pendingUploads}...` : `Uploading image ${uploaded + 1} of ${pendingUploads}...`);
+          savedImage = await uploadHomeHeroImage(image.file);
+          uploaded += 1;
+          setHomeHeroDraft((items) => items.map((item) => item.id === image.id ? savedImage : item));
+        }
+        savedImages.push(savedImage);
+      }
+      await saveHomeHeroImages(savedImages);
+      clearHomeHeroPreviews();
+      setHomeHeroImages(savedImages);
+      setHomeHeroDraft(savedImages);
+      setHomeHeroProgress("");
+      setHomeHeroOpen(false);
+    } catch (error) {
+      setHomeHeroError(adminSaveError(error, lang));
+    } finally {
+      setAdminBusy(false);
+      setHomeHeroProgress("");
+    }
   }
 
   function addImages(files: File[]) {
@@ -4137,12 +4287,39 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoção por marca" : "Brand promotion"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={openHomeHeroManager}><Camera size={17} />{lang === "pt" ? "Imagens iniciais" : "Homepage images"}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoção por marca" : "Brand promotion"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <RevokeSessionsButton lang={lang} disabled={adminBusy} />
       {shippingOpen && <ShippingSettingsDialog lang={lang} onClose={() => setShippingOpen(false)} />}
       {brandsOpen && <BrandSettingsDialog lang={lang} onClose={() => setBrandsOpen(false)} onCreated={editorOpen ? (brand) => { setDraft((current) => ({ ...current, brand })); setBrandsOpen(false); } : undefined} />}
+      {homeHeroOpen && <>
+        <button className="modal-backdrop" onClick={closeHomeHeroManager} aria-label={copy.cancel} />
+        <form className="home-hero-manager" onSubmit={saveHomeHero} role="dialog" aria-modal="true" aria-labelledby="home-hero-manager-title">
+          <header><div><Camera size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="home-hero-manager-title">{lang === "pt" ? "Imagens da página inicial" : "Homepage images"}</h2></div></div><button type="button" onClick={closeHomeHeroManager} disabled={adminBusy} aria-label={copy.cancel}><X size={20} /></button></header>
+          <p>{lang === "pt" ? "Estas fotografias aparecem na zona principal da loja. Com uma fotografia, a imagem fica estática; com duas ou mais, o carrossel roda apenas entre as fotografias guardadas." : "These images appear in the main store area. One image stays static; with two or more, the carousel rotates only through the saved images."}</p>
+          <div className="home-hero-image-list">
+            {homeHeroDraft.map((image, index) => <article key={image.id}>
+              <img src={image.imageUrl} alt={`${lang === "pt" ? "Fotografia" : "Image"} ${index + 1}`} />
+              <div><strong>{lang === "pt" ? `Fotografia ${index + 1}` : `Image ${index + 1}`}</strong><small>{index === 0 ? (lang === "pt" ? "Primeira imagem" : "First image") : (lang === "pt" ? "Segue no carrossel" : "Carousel image")}</small></div>
+              <div className="home-hero-image-actions">
+                <button type="button" disabled={adminBusy || index === 0} onClick={() => moveHomeHeroImage(index, -1)} aria-label={lang === "pt" ? "Mover para trás" : "Move backward"}><ChevronLeft size={17} /></button>
+                <button type="button" disabled={adminBusy || index === homeHeroDraft.length - 1} onClick={() => moveHomeHeroImage(index, 1)} aria-label={lang === "pt" ? "Mover para a frente" : "Move forward"}><ChevronRight size={17} /></button>
+                <button className="remove" type="button" disabled={adminBusy || homeHeroDraft.length === 1} onClick={() => { setHomeHeroDraft((images) => images.filter((item) => item.id !== image.id)); setHomeHeroError(""); }} aria-label={lang === "pt" ? "Remover fotografia" : "Remove image"}><Trash2 size={17} /></button>
+              </div>
+            </article>)}
+          </div>
+          <label className="home-hero-image-drop">
+            <Camera size={24} />
+            <span><strong>{lang === "pt" ? "Adicionar fotografias" : "Add images"}</strong><small>{lang === "pt" ? `JPG, PNG ou WebP · máximo de ${MAX_HOME_HERO_IMAGES} fotografias · 5 MB cada` : `JPG, PNG or WebP · up to ${MAX_HOME_HERO_IMAGES} images · 5 MB each`}</small></span>
+            <input type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={!firebaseEnabled || !storageEnabled || adminBusy || homeHeroDraft.length >= MAX_HOME_HERO_IMAGES} onChange={(event) => { addHomeHeroImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+          </label>
+          {!storageEnabled && <p className="auth-error" role="alert">{lang === "pt" ? "O Firebase Storage não está ativo neste ambiente." : "Firebase Storage is not enabled in this environment."}</p>}
+          {homeHeroProgress && <p className="home-hero-progress" role="status">{homeHeroProgress}</p>}
+          {homeHeroError && <p className="auth-error" role="alert">{homeHeroError}</p>}
+          <footer><button className="admin-cancel" type="button" disabled={adminBusy} onClick={closeHomeHeroManager}>{copy.cancel}</button><button className="primary-button" type="submit" disabled={adminBusy || !firebaseEnabled || homeHeroDraft.length === 0}><Save size={16} />{adminBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Guardar imagens" : "Save images")}</button></footer>
+        </form>
+      </>}
       {brandPromotionsOpen && <>
         <button className="modal-backdrop" onClick={() => !adminBusy && setBrandPromotionsOpen(false)} aria-label={copy.cancel} />
         <form className="brand-promotion-manager" onSubmit={saveBrandPromotion} role="dialog" aria-modal="true" aria-labelledby="brand-promotion-title">

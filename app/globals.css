@@ -991,9 +991,73 @@ a {
 }
 
 .hero-store-image img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   object-position: center 76%;
+  opacity: 0;
+  transform: scale(1.025);
   filter: saturate(0.96) contrast(1.03) sepia(0.05);
+  transition: opacity 750ms ease, transform 5.6s ease;
+}
+
+.hero-store-image img.active {
+  z-index: 1;
+  opacity: 1;
+  transform: scale(1);
+}
+
+.hero-carousel-arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(240, 211, 110, 0.54);
+  border-radius: 50%;
+  background: rgba(3, 3, 2, 0.66);
+  color: var(--gold-2);
+  transform: translateY(-50%);
+  backdrop-filter: blur(5px);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.hero-carousel-arrow:hover,
+.hero-carousel-arrow:focus-visible {
+  border-color: var(--gold-2);
+  background: rgba(3, 3, 2, 0.88);
+}
+
+.hero-carousel-arrow.previous { left: 24px; }
+.hero-carousel-arrow.next { right: 24px; }
+
+.hero-carousel-dots {
+  position: absolute;
+  bottom: 29px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  transform: translateX(-50%);
+}
+
+.hero-carousel-dots button {
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(255, 240, 190, 0.78);
+  border-radius: 50%;
+  background: rgba(3, 3, 2, 0.7);
+  transition: width 180ms ease, border-radius 180ms ease, background 180ms ease;
+}
+
+.hero-carousel-dots button.active {
+  width: 28px;
+  border-radius: 999px;
+  background: var(--gold-2);
 }
 
 .hero-image-caption {
@@ -5742,7 +5806,8 @@ select {
 
 .favorite-picker,
 .admin-editor-modal,
-.coupon-manager {
+.coupon-manager,
+.home-hero-manager {
   position: fixed;
   top: 50%;
   left: 50%;
@@ -5758,7 +5823,8 @@ select {
 
 .favorite-picker > header,
 .admin-editor-modal > header,
-.coupon-manager > header {
+.coupon-manager > header,
+.home-hero-manager > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5769,7 +5835,8 @@ select {
 
 .favorite-picker > header > div,
 .admin-editor-modal > header > div,
-.coupon-manager > header > div {
+.coupon-manager > header > div,
+.home-hero-manager > header > div {
   display: flex;
   align-items: center;
   gap: 13px;
@@ -5789,7 +5856,8 @@ select {
 
 .favorite-picker h2,
 .admin-editor-modal h2,
-.coupon-manager h2 {
+.coupon-manager h2,
+.home-hero-manager h2 {
   margin: 4px 0 0;
   font-family: var(--font-display);
   font-size: 25px;
@@ -5845,6 +5913,140 @@ select {
 
 .coupon-manager {
   width: min(590px, calc(100vw - 32px));
+}
+
+.home-hero-manager {
+  display: grid;
+  gap: 18px;
+  width: min(920px, calc(100vw - 32px));
+  padding: 0 22px 22px;
+}
+
+.home-hero-manager > header {
+  margin: 0 -22px;
+}
+
+.home-hero-manager > header svg,
+.home-hero-manager > header .eyebrow {
+  color: var(--gold-2);
+}
+
+.home-hero-manager > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.home-hero-image-list {
+  display: grid;
+  gap: 10px;
+}
+
+.home-hero-image-list article {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #090806;
+}
+
+.home-hero-image-list img {
+  width: 150px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: center;
+}
+
+.home-hero-image-list strong,
+.home-hero-image-list small {
+  display: block;
+}
+
+.home-hero-image-list strong {
+  color: var(--cream);
+  font-size: 14px;
+}
+
+.home-hero-image-list small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.home-hero-image-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.home-hero-image-actions button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  color: var(--gold-2);
+}
+
+.home-hero-image-actions button.remove {
+  border-color: rgba(183, 101, 86, 0.48);
+  color: #d98b7d;
+}
+
+.home-hero-image-actions button:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.home-hero-image-drop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 82px;
+  padding: 16px 18px;
+  overflow: hidden;
+  border: 1px dashed rgba(224, 177, 64, 0.65);
+  background: rgba(197, 144, 34, 0.05);
+  color: var(--gold-2);
+  cursor: pointer;
+}
+
+.home-hero-image-drop input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.home-hero-image-drop span,
+.home-hero-image-drop strong,
+.home-hero-image-drop small {
+  display: block;
+}
+
+.home-hero-image-drop strong { color: var(--cream); }
+.home-hero-image-drop small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.home-hero-image-drop:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
+.home-hero-progress { margin: 0; color: var(--gold-2); font-size: 13px; }
+
+.home-hero-manager > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.home-hero-manager > footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 20px;
 }
 
 .coupon-manager > header svg,
@@ -11986,4 +12188,38 @@ select {
   .loyalty-reward-grid article:last-child { grid-column: auto; min-height: 0; }
   .loyalty-rules-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .loyalty-rules-image { max-height: calc(100dvh - 88px); }
+
+  .hero-carousel-arrow {
+    width: 38px;
+    height: 38px;
+  }
+
+  .hero-carousel-arrow.previous { left: 12px; }
+  .hero-carousel-arrow.next { right: 12px; }
+  .hero-carousel-dots { bottom: 17px; }
+
+  .home-hero-manager {
+    width: calc(100vw - 18px);
+    max-height: calc(100dvh - 18px);
+    gap: 14px;
+    padding: 0 14px 14px;
+  }
+
+  .home-hero-manager > header {
+    margin: 0 -14px;
+    padding-inline: 14px;
+  }
+
+  .home-hero-manager h2 { font-size: 22px; }
+
+  .home-hero-image-list article {
+    grid-template-columns: 94px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .home-hero-image-list img { width: 94px; }
+  .home-hero-image-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .home-hero-image-drop { padding: 14px; }
+  .home-hero-manager > footer { display: grid; grid-template-columns: 1fr 1fr; }
+  .home-hero-manager > footer button { width: 100%; padding-inline: 10px; }
 }
