@@ -7,6 +7,12 @@ function brandKey(value) {
     .toLowerCase();
 }
 
+export const ALL_STORE_PROMOTION = "__all_store__";
+
+export function isAllStorePromotion(value) {
+  return brandKey(value) === brandKey(ALL_STORE_PROMOTION);
+}
+
 function validPromotion(value) {
   return value && typeof value === "object"
     && typeof value.brand === "string"
@@ -16,10 +22,11 @@ function validPromotion(value) {
 
 export function applyBrandPromotion(catalogue, brand, discount, endsAt, appliedAt = new Date().toISOString()) {
   const targetBrand = brandKey(brand);
+  const appliesToAllStore = isAllStorePromotion(brand);
   const normalizedDiscount = Math.min(95, Math.max(1, Math.trunc(Number(discount))));
 
   return catalogue.map((product) => {
-    if (product.isDecant || brandKey(product.brand) !== targetBrand) return product;
+    if (product.isDecant || product.isGiftCard || (!appliesToAllStore && brandKey(product.brand) !== targetBrand)) return product;
     const currentCampaign = validPromotion(product.brandPromotion) && brandKey(product.brandPromotion.brand) === targetBrand
       ? product.brandPromotion
       : null;
@@ -28,7 +35,7 @@ export function applyBrandPromotion(catalogue, brand, discount, endsAt, appliedA
       discount: normalizedDiscount,
       promotionEndsAt: endsAt,
       brandPromotion: {
-        brand: product.brand,
+        brand: appliesToAllStore ? ALL_STORE_PROMOTION : product.brand,
         discount: normalizedDiscount,
         endsAt,
         appliedAt,
@@ -56,7 +63,7 @@ export function removeBrandPromotion(catalogue, brand) {
 export function brandPromotionSummaries(catalogue) {
   const summaries = new Map();
   catalogue.forEach((product) => {
-    if (product.isDecant || !validPromotion(product.brandPromotion)) return;
+    if (product.isDecant || product.isGiftCard || !validPromotion(product.brandPromotion)) return;
     const campaign = product.brandPromotion;
     const key = brandKey(campaign.brand);
     const existing = summaries.get(key);
@@ -71,7 +78,11 @@ export function brandPromotionSummaries(catalogue) {
       productCount: 1,
     });
   });
-  return [...summaries.values()].sort((a, b) => a.brand.localeCompare(b.brand, "pt"));
+  return [...summaries.values()].sort((a, b) => {
+    if (isAllStorePromotion(a.brand)) return -1;
+    if (isAllStorePromotion(b.brand)) return 1;
+    return a.brand.localeCompare(b.brand, "pt");
+  });
 }
 
 export function brandPromotionChanges(before, after) {

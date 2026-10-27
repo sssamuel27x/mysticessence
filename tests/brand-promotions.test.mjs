@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ALL_STORE_PROMOTION,
   applyBrandPromotion,
   brandPromotionChanges,
   brandPromotionSummaries,
@@ -12,6 +13,7 @@ const catalogue = [
   { id: "rayhaan-two", brand: " RAYHAAN " },
   { id: "decant-rayhaan-one", brand: "Rayhaan", isDecant: true, discount: 10 },
   { id: "other", brand: "Afnan" },
+  { id: "gift-card", brand: "Mystic Essence", isGiftCard: true },
 ];
 
 test("a brand promotion updates every full bottle of the selected brand and leaves decants alone", () => {
@@ -20,7 +22,31 @@ test("a brand promotion updates every full bottle of the selected brand and leav
   assert.equal(result[1].discount, 20);
   assert.equal(result[2].discount, 10);
   assert.equal(result[3].discount, undefined);
+  assert.equal(result[4].discount, undefined);
   assert.equal(brandPromotionChanges(catalogue, result).length, 2);
+});
+
+test("a whole-store promotion updates every eligible product but excludes decants and gift cards", () => {
+  const result = applyBrandPromotion(catalogue, ALL_STORE_PROMOTION, 18, "2027-05-01T00:00:00.000Z", "2026-10-27T12:00:00.000Z");
+  assert.equal(result[0].discount, 18);
+  assert.equal(result[1].discount, 18);
+  assert.equal(result[2].discount, 10);
+  assert.equal(result[3].discount, 18);
+  assert.equal(result[4].discount, undefined);
+  assert.equal(brandPromotionChanges(catalogue, result).length, 3);
+  assert.deepEqual(brandPromotionSummaries(result).map(({ brand, discount, productCount }) => ({ brand, discount, productCount })), [
+    { brand: ALL_STORE_PROMOTION, discount: 18, productCount: 3 },
+  ]);
+});
+
+test("ending a whole-store promotion restores the previous individual promotions", () => {
+  const promoted = applyBrandPromotion(catalogue, ALL_STORE_PROMOTION, 22, "2027-05-01T00:00:00.000Z");
+  const restored = removeBrandPromotion(promoted, ALL_STORE_PROMOTION);
+  assert.equal(restored[0].discount, 10);
+  assert.equal(restored[0].promotionEndsAt, "2027-01-01T00:00:00.000Z");
+  assert.equal(restored[1].discount, null);
+  assert.equal(restored[3].discount, null);
+  assert.equal(restored[4].discount, undefined);
 });
 
 test("ending a brand promotion restores each product's previous individual promotion", () => {

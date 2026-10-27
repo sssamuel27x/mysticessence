@@ -16,7 +16,7 @@ import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
-import { applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, removeBrandPromotion } from "./brand-promotions.mjs";
+import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
 import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
@@ -3733,8 +3733,12 @@ function AdminPage({
   const archivedOrders = orders.filter((order) => order.paymentStatus === "paid" && order.archived);
   const visibleOrders = showArchive ? archivedOrders : activeOrders;
   const inventoryProducts = products.filter((product) => !product.isDecant);
+  const promotionEligibleProducts = inventoryProducts.filter((product) => !product.isGiftCard);
   const visibleProducts = filterAdminCatalogue(products, catalogQuery, catalogCategory, catalogHighlight);
   const activeBrandPromotions = brandPromotionSummaries(inventoryProducts) as Array<{ brand: string; discount: number; endsAt: string; productCount: number }>;
+  const wholeStorePromotionActive = activeBrandPromotions.some((campaign) => isAllStorePromotion(campaign.brand));
+  const selectedPromotionIsWholeStore = isAllStorePromotion(brandPromotionBrand);
+  const selectedPromotionProducts = promotionEligibleProducts.filter((product) => selectedPromotionIsWholeStore || brandKey(product.brand) === brandKey(brandPromotionBrand));
 
   useEffect(() => {
     const previews = imagePreviewUrls.current;
@@ -4217,10 +4221,7 @@ function AdminPage({
   }
 
   function openBrandPromotions() {
-    const firstBrand = brands.find((brand) => inventoryProducts.some((product) => brandKey(product.brand) === brandKey(brand)))
-      ?? inventoryProducts[0]?.brand
-      ?? "";
-    setBrandPromotionBrand((current) => current || firstBrand);
+    setBrandPromotionBrand((current) => current || ALL_STORE_PROMOTION);
     setBrandPromotionEndsAt(toDateTimeInput());
     setBrandPromotionError("");
     setBrandPromotionMessage("");
@@ -4234,9 +4235,14 @@ function AdminPage({
     setBrandPromotionMessage("");
     const discount = Number(brandPromotionDiscount);
     const endDate = new Date(brandPromotionEndsAt);
-    const matchingProducts = inventoryProducts.filter((product) => brandKey(product.brand) === brandKey(brandPromotionBrand));
+    const appliesToWholeStore = isAllStorePromotion(brandPromotionBrand);
+    const matchingProducts = promotionEligibleProducts.filter((product) => appliesToWholeStore || brandKey(product.brand) === brandKey(brandPromotionBrand));
     if (!brandPromotionBrand || matchingProducts.length === 0) {
-      setBrandPromotionError(lang === "pt" ? "Escolha uma marca que tenha produtos no catálogo." : "Choose a brand with products in the catalogue.");
+      setBrandPromotionError(lang === "pt" ? "Escolha toda a loja ou uma marca que tenha produtos elegíveis no catálogo." : "Choose the whole store or a brand with eligible products in the catalogue.");
+      return;
+    }
+    if (!appliesToWholeStore && wholeStorePromotionActive) {
+      setBrandPromotionError(lang === "pt" ? "Termine primeiro a promoção de toda a loja antes de ativar uma campanha por marca." : "End the whole-store promotion before activating a brand campaign.");
       return;
     }
     if (!Number.isInteger(discount) || discount < 1 || discount > 95) {
@@ -4247,15 +4253,22 @@ function AdminPage({
       setBrandPromotionError(lang === "pt" ? "Escolha uma data futura para terminar a promoção." : "Choose a future end date.");
       return;
     }
-    const updated = applyBrandPromotion(products, brandPromotionBrand, discount, endDate.toISOString()) as Product[];
+    const promotionBase = appliesToWholeStore
+      ? activeBrandPromotions.reduce((catalogue, campaign) => removeBrandPromotion(catalogue, campaign.brand), products as Product[])
+      : products;
+    const updated = applyBrandPromotion(promotionBase, brandPromotionBrand, discount, endDate.toISOString()) as Product[];
     const changes = brandPromotionChanges(products, updated) as Product[];
     setAdminBusy(true);
     try {
       if (firebaseEnabled) await saveBrandPromotionChanges(changes);
       setProducts(updated);
       setBrandPromotionMessage(lang === "pt"
-        ? `Promoção de ${discount}% aplicada a ${matchingProducts.length} produto(s) da ${brandPromotionBrand}.`
-        : `${discount}% promotion applied to ${matchingProducts.length} ${brandPromotionBrand} product(s).`);
+        ? appliesToWholeStore
+          ? `Promoção de ${discount}% aplicada a ${matchingProducts.length} produto(s) elegíveis de toda a loja.`
+          : `Promoção de ${discount}% aplicada a ${matchingProducts.length} produto(s) da ${brandPromotionBrand}.`
+        : appliesToWholeStore
+          ? `${discount}% promotion applied to ${matchingProducts.length} eligible products across the store.`
+          : `${discount}% promotion applied to ${matchingProducts.length} ${brandPromotionBrand} product(s).`);
     } catch (error) {
       setBrandPromotionError(adminSaveError(error, lang));
     } finally {
@@ -4273,9 +4286,10 @@ function AdminPage({
     try {
       if (firebaseEnabled) await saveBrandPromotionChanges(changes);
       setProducts(updated);
+      const campaignLabel = isAllStorePromotion(brand) ? (lang === "pt" ? "toda a loja" : "the whole store") : brand;
       setBrandPromotionMessage(lang === "pt"
-        ? `A promoção da ${brand} terminou e os descontos anteriores foram repostos.`
-        : `${brand}'s promotion ended and previous discounts were restored.`);
+        ? `A promoção de ${campaignLabel} terminou e os descontos anteriores foram repostos.`
+        : `${campaignLabel}'s promotion ended and previous discounts were restored.`);
     } catch (error) {
       setBrandPromotionError(adminSaveError(error, lang));
     } finally {
@@ -4287,7 +4301,7 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={openHomeHeroManager}><Camera size={17} />{lang === "pt" ? "Imagens iniciais" : "Homepage images"}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoção por marca" : "Brand promotion"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={openHomeHeroManager}><Camera size={17} />{lang === "pt" ? "Imagens iniciais" : "Homepage images"}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoções da loja" : "Store promotions"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <RevokeSessionsButton lang={lang} disabled={adminBusy} />
@@ -4323,19 +4337,19 @@ function AdminPage({
       {brandPromotionsOpen && <>
         <button className="modal-backdrop" onClick={() => !adminBusy && setBrandPromotionsOpen(false)} aria-label={copy.cancel} />
         <form className="brand-promotion-manager" onSubmit={saveBrandPromotion} role="dialog" aria-modal="true" aria-labelledby="brand-promotion-title">
-          <header><div><TicketPercent size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="brand-promotion-title">{lang === "pt" ? "Promoções por marca" : "Brand promotions"}</h2></div></div><button type="button" onClick={() => setBrandPromotionsOpen(false)} disabled={adminBusy} aria-label={copy.cancel}><X size={20} /></button></header>
-          <p className="brand-promotion-intro">{lang === "pt" ? "Aplique o mesmo desconto a todos os frascos de uma marca. Os decants ficam de fora e as promoções individuais anteriores são repostas quando terminar a campanha." : "Apply the same discount to every full bottle from a brand. Decants are excluded and previous individual promotions are restored when the campaign ends."}</p>
+          <header><div><TicketPercent size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="brand-promotion-title">{lang === "pt" ? "Promoções da loja" : "Store promotions"}</h2></div></div><button type="button" onClick={() => setBrandPromotionsOpen(false)} disabled={adminBusy} aria-label={copy.cancel}><X size={20} /></button></header>
+          <p className="brand-promotion-intro">{lang === "pt" ? "Aplique o mesmo desconto a toda a loja ou a todos os produtos de uma marca. Decants e gift cards ficam de fora; as promoções individuais anteriores são repostas quando a campanha terminar." : "Apply the same discount across the store or to every product from one brand. Decants and gift cards are excluded; previous individual promotions are restored when the campaign ends."}</p>
           <div className="brand-promotion-fields">
-            <label><span>{lang === "pt" ? "Marca" : "Brand"}</span><select value={brandPromotionBrand} onChange={(event) => setBrandPromotionBrand(event.target.value)}>{brands.filter((brand) => inventoryProducts.some((product) => brandKey(product.brand) === brandKey(brand))).map((brand) => <option key={brandKey(brand)} value={brand}>{brand}</option>)}</select></label>
+            <label><span>{lang === "pt" ? "Âmbito da promoção" : "Promotion scope"}</span><select value={brandPromotionBrand} onChange={(event) => setBrandPromotionBrand(event.target.value)}><option value={ALL_STORE_PROMOTION}>{lang === "pt" ? "Toda a loja" : "Whole store"}</option>{brands.filter((brand) => promotionEligibleProducts.some((product) => brandKey(product.brand) === brandKey(brand))).map((brand) => <option key={brandKey(brand)} value={brand}>{brand}</option>)}</select></label>
             <label><span>{lang === "pt" ? "Desconto" : "Discount"}</span><div className="brand-promotion-percent"><input type="number" min="1" max="95" step="1" value={brandPromotionDiscount} onChange={(event) => setBrandPromotionDiscount(event.target.value)} /><b>%</b></div></label>
             <label><span>{lang === "pt" ? "Termina em" : "Ends at"}</span><input type="datetime-local" value={brandPromotionEndsAt} onChange={(event) => setBrandPromotionEndsAt(event.target.value)} /></label>
           </div>
-          <p className="brand-promotion-count"><BadgeCheck size={17} />{lang === "pt" ? `${inventoryProducts.filter((product) => brandKey(product.brand) === brandKey(brandPromotionBrand)).length} produto(s) serão atualizados.` : `${inventoryProducts.filter((product) => brandKey(product.brand) === brandKey(brandPromotionBrand)).length} product(s) will be updated.`}</p>
-          <button className="primary-button brand-promotion-submit" type="submit" disabled={adminBusy}>{adminBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : (lang === "pt" ? "Ativar promoção da marca" : "Activate brand promotion")}</button>
+          <p className="brand-promotion-count"><BadgeCheck size={17} />{lang === "pt" ? `${selectedPromotionProducts.length} produto(s) elegíveis serão atualizados.` : `${selectedPromotionProducts.length} eligible product(s) will be updated.`}</p>
+          <button className="primary-button brand-promotion-submit" type="submit" disabled={adminBusy}>{adminBusy ? (lang === "pt" ? "A guardar..." : "Saving...") : selectedPromotionIsWholeStore ? (lang === "pt" ? "Ativar promoção em toda a loja" : "Activate whole-store promotion") : (lang === "pt" ? "Ativar promoção da marca" : "Activate brand promotion")}</button>
           <section className="brand-promotion-active" aria-labelledby="brand-promotion-active-title">
             <h3 id="brand-promotion-active-title">{lang === "pt" ? "Campanhas configuradas" : "Configured campaigns"}</h3>
-            {activeBrandPromotions.length === 0 ? <p>{lang === "pt" ? "Ainda não existem promoções por marca." : "There are no brand promotions yet."}</p> : activeBrandPromotions.map((campaign) => <article key={brandKey(campaign.brand)}>
-              <div><strong>{campaign.brand}</strong><span>-{campaign.discount}% · {campaign.productCount} {lang === "pt" ? "produto(s)" : "product(s)"}</span><small>{new Date(campaign.endsAt).getTime() > Date.now() ? `${lang === "pt" ? "Até" : "Until"} ${new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(campaign.endsAt))}` : (lang === "pt" ? "Campanha expirada" : "Campaign expired")}</small></div>
+            {activeBrandPromotions.length === 0 ? <p>{lang === "pt" ? "Ainda não existem campanhas de promoção." : "There are no promotion campaigns yet."}</p> : activeBrandPromotions.map((campaign) => <article key={brandKey(campaign.brand)}>
+              <div><strong>{isAllStorePromotion(campaign.brand) ? (lang === "pt" ? "Toda a loja" : "Whole store") : campaign.brand}</strong><span>-{campaign.discount}% · {campaign.productCount} {lang === "pt" ? "produto(s)" : "product(s)"}</span><small>{new Date(campaign.endsAt).getTime() > Date.now() ? `${lang === "pt" ? "Até" : "Until"} ${new Intl.DateTimeFormat(lang === "pt" ? "pt-PT" : "en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(campaign.endsAt))}` : (lang === "pt" ? "Campanha expirada" : "Campaign expired")}</small></div>
               <button className="ghost-button" type="button" disabled={adminBusy} onClick={() => void endBrandPromotion(campaign.brand)}><Minus size={16} />{lang === "pt" ? "Terminar" : "End"}</button>
             </article>)}
           </section>
