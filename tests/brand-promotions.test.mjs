@@ -5,6 +5,7 @@ import {
   applyBrandPromotion,
   brandPromotionChanges,
   brandPromotionSummaries,
+  effectiveCampaignDiscount,
   removeBrandPromotion,
 } from "../app/brand-promotions.mjs";
 
@@ -47,6 +48,42 @@ test("ending a whole-store promotion restores the previous individual promotions
   assert.equal(restored[1].discount, null);
   assert.equal(restored[3].discount, null);
   assert.equal(restored[4].discount, undefined);
+});
+
+test("a whole-store promotion and a stronger brand promotion can run together", () => {
+  const storewide = applyBrandPromotion(catalogue, ALL_STORE_PROMOTION, 10, "2027-05-01T00:00:00.000Z");
+  const combined = applyBrandPromotion(storewide, "Rayhaan", 20, "2027-04-01T00:00:00.000Z");
+  assert.equal(combined[0].discount, 20);
+  assert.equal(combined[1].discount, 20);
+  assert.equal(combined[3].discount, 10);
+  assert.equal(combined[0].storePromotion.discount, 10);
+  assert.equal(combined[0].brandPromotion.discount, 20);
+  assert.deepEqual(brandPromotionSummaries(combined).map(({ brand, discount, productCount }) => ({ brand, discount, productCount })), [
+    { brand: ALL_STORE_PROMOTION, discount: 10, productCount: 3 },
+    { brand: "Rayhaan", discount: 20, productCount: 2 },
+  ]);
+  const withoutBrand = removeBrandPromotion(combined, "Rayhaan");
+  assert.equal(withoutBrand[0].discount, 10);
+  assert.equal(withoutBrand[0].brandPromotion, null);
+  assert.equal(withoutBrand[0].storePromotion.discount, 10);
+});
+
+test("ending a whole-store promotion keeps an active brand promotion", () => {
+  const branded = applyBrandPromotion(catalogue, "Rayhaan", 20, "2027-04-01T00:00:00.000Z");
+  const combined = applyBrandPromotion(branded, ALL_STORE_PROMOTION, 10, "2027-05-01T00:00:00.000Z");
+  const withoutStorewide = removeBrandPromotion(combined, ALL_STORE_PROMOTION);
+  assert.equal(withoutStorewide[0].discount, 20);
+  assert.equal(withoutStorewide[0].storePromotion, null);
+  assert.equal(withoutStorewide[0].brandPromotion.discount, 20);
+  assert.equal(withoutStorewide[3].discount, null);
+});
+
+test("an expired brand campaign automatically falls back to the active store promotion", () => {
+  const storewide = applyBrandPromotion(catalogue, ALL_STORE_PROMOTION, 10, "2027-05-01T00:00:00.000Z");
+  const combined = applyBrandPromotion(storewide, "Rayhaan", 20, "2027-04-01T00:00:00.000Z");
+  assert.equal(effectiveCampaignDiscount(combined[0], new Date("2027-03-01T00:00:00.000Z").getTime()), 20);
+  assert.equal(effectiveCampaignDiscount(combined[0], new Date("2027-04-02T00:00:00.000Z").getTime()), 10);
+  assert.equal(effectiveCampaignDiscount(combined[0], new Date("2027-05-02T00:00:00.000Z").getTime()), 0);
 });
 
 test("ending a brand promotion restores each product's previous individual promotion", () => {

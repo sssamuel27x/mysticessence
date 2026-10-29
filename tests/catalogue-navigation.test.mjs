@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { effectiveCampaignDiscount } from "../app/brand-promotions.mjs";
 
 const source = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -21,7 +22,7 @@ const declarations = ast.statements.filter((node) => {
 const js = ts.transpileModule(`${declarations}\nObject.assign(globalThis, { productSet, filterAdminCatalogue, searchCatalogue, productsForProfile, asDecantProduct, routeFromPath, getProductAudiences, toggleProductCategory });`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
-const api = vm.createContext({ URLSearchParams });
+const api = vm.createContext({ URLSearchParams, effectiveCampaignDiscount });
 vm.runInContext(js, api);
 
 const sample = (id, overrides = {}) => ({

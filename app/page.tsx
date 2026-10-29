@@ -16,7 +16,7 @@ import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
-import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
+import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, effectiveCampaignDiscount, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
 import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
@@ -159,6 +159,14 @@ type Product = {
   price: number;
   discount?: number;
   promotionEndsAt?: string;
+  storePromotion?: {
+    brand: string;
+    discount: number;
+    endsAt: string;
+    appliedAt: string;
+    previousDiscount: number | null;
+    previousEndsAt: string | null;
+  } | null;
   brandPromotion?: {
     brand: string;
     discount: number;
@@ -999,6 +1007,7 @@ function asDecantProduct(product: Product): Product | null {
     isDecant: true,
     discount: undefined,
     promotionEndsAt: undefined,
+    storePromotion: undefined,
     brandPromotion: undefined,
   };
 }
@@ -1151,6 +1160,8 @@ function productPromotionEnd(product: Product) {
 }
 
 function productDiscount(product: Product, now = Date.now()) {
+  const campaignDiscount = effectiveCampaignDiscount(product, now);
+  if (campaignDiscount !== null) return campaignDiscount;
   const discount = Object.prototype.hasOwnProperty.call(product, "discount") ? product.discount ?? 0 : DISCOUNTS[product.id] ?? 0;
   const endsAt = productPromotionEnd(product);
   if (endsAt && new Date(endsAt).getTime() <= now) return 0;
@@ -3736,7 +3747,6 @@ function AdminPage({
   const promotionEligibleProducts = inventoryProducts.filter((product) => !product.isGiftCard);
   const visibleProducts = filterAdminCatalogue(products, catalogQuery, catalogCategory, catalogHighlight);
   const activeBrandPromotions = brandPromotionSummaries(inventoryProducts) as Array<{ brand: string; discount: number; endsAt: string; productCount: number }>;
-  const wholeStorePromotionActive = activeBrandPromotions.some((campaign) => isAllStorePromotion(campaign.brand));
   const selectedPromotionIsWholeStore = isAllStorePromotion(brandPromotionBrand);
   const selectedPromotionProducts = promotionEligibleProducts.filter((product) => selectedPromotionIsWholeStore || brandKey(product.brand) === brandKey(brandPromotionBrand));
 
@@ -4241,10 +4251,6 @@ function AdminPage({
       setBrandPromotionError(lang === "pt" ? "Escolha toda a loja ou uma marca que tenha produtos elegíveis no catálogo." : "Choose the whole store or a brand with eligible products in the catalogue.");
       return;
     }
-    if (!appliesToWholeStore && wholeStorePromotionActive) {
-      setBrandPromotionError(lang === "pt" ? "Termine primeiro a promoção de toda a loja antes de ativar uma campanha por marca." : "End the whole-store promotion before activating a brand campaign.");
-      return;
-    }
     if (!Number.isInteger(discount) || discount < 1 || discount > 95) {
       setBrandPromotionError(lang === "pt" ? "Indique um desconto inteiro entre 1% e 95%." : "Enter a whole discount between 1% and 95%.");
       return;
@@ -4253,10 +4259,7 @@ function AdminPage({
       setBrandPromotionError(lang === "pt" ? "Escolha uma data futura para terminar a promoção." : "Choose a future end date.");
       return;
     }
-    const promotionBase = appliesToWholeStore
-      ? activeBrandPromotions.reduce((catalogue, campaign) => removeBrandPromotion(catalogue, campaign.brand), products as Product[])
-      : products;
-    const updated = applyBrandPromotion(promotionBase, brandPromotionBrand, discount, endDate.toISOString()) as Product[];
+    const updated = applyBrandPromotion(products, brandPromotionBrand, discount, endDate.toISOString()) as Product[];
     const changes = brandPromotionChanges(products, updated) as Product[];
     setAdminBusy(true);
     try {
@@ -4338,7 +4341,7 @@ function AdminPage({
         <button className="modal-backdrop" onClick={() => !adminBusy && setBrandPromotionsOpen(false)} aria-label={copy.cancel} />
         <form className="brand-promotion-manager" onSubmit={saveBrandPromotion} role="dialog" aria-modal="true" aria-labelledby="brand-promotion-title">
           <header><div><TicketPercent size={21} /><div><span className="eyebrow">Mystic Essence Admin</span><h2 id="brand-promotion-title">{lang === "pt" ? "Promoções da loja" : "Store promotions"}</h2></div></div><button type="button" onClick={() => setBrandPromotionsOpen(false)} disabled={adminBusy} aria-label={copy.cancel}><X size={20} /></button></header>
-          <p className="brand-promotion-intro">{lang === "pt" ? "Aplique o mesmo desconto a toda a loja ou a todos os produtos de uma marca. Decants e gift cards ficam de fora; as promoções individuais anteriores são repostas quando a campanha terminar." : "Apply the same discount across the store or to every product from one brand. Decants and gift cards are excluded; previous individual promotions are restored when the campaign ends."}</p>
+          <p className="brand-promotion-intro">{lang === "pt" ? "Aplique promoções em toda a loja e, ao mesmo tempo, descontos superiores em marcas específicas. As percentagens não acumulam: em cada produto prevalece sempre o maior desconto. Decants e gift cards ficam de fora." : "Run a whole-store promotion alongside higher discounts for specific brands. Percentages do not stack: each product always receives the highest discount. Decants and gift cards are excluded."}</p>
           <div className="brand-promotion-fields">
             <label><span>{lang === "pt" ? "Âmbito da promoção" : "Promotion scope"}</span><select value={brandPromotionBrand} onChange={(event) => setBrandPromotionBrand(event.target.value)}><option value={ALL_STORE_PROMOTION}>{lang === "pt" ? "Toda a loja" : "Whole store"}</option>{brands.filter((brand) => promotionEligibleProducts.some((product) => brandKey(product.brand) === brandKey(brand))).map((brand) => <option key={brandKey(brand)} value={brand}>{brand}</option>)}</select></label>
             <label><span>{lang === "pt" ? "Desconto" : "Discount"}</span><div className="brand-promotion-percent"><input type="number" min="1" max="95" step="1" value={brandPromotionDiscount} onChange={(event) => setBrandPromotionDiscount(event.target.value)} /><b>%</b></div></label>
