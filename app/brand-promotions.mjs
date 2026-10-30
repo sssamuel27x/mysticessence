@@ -90,6 +90,16 @@ export function effectiveCampaignDiscount(product, now = Date.now()) {
   );
 }
 
+export function clearCampaignPricing(product) {
+  return {
+    ...product,
+    discount: undefined,
+    promotionEndsAt: undefined,
+    storePromotion: undefined,
+    brandPromotion: undefined,
+  };
+}
+
 export function applyBrandPromotion(catalogue, brand, discount, endsAt, appliedAt = new Date().toISOString()) {
   const targetBrand = brandKey(brand);
   const appliesToAllStore = isAllStorePromotion(brand);

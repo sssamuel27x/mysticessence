@@ -5,6 +5,7 @@ import {
   applyBrandPromotion,
   brandPromotionChanges,
   brandPromotionSummaries,
+  clearCampaignPricing,
   effectiveCampaignDiscount,
   removeBrandPromotion,
 } from "../app/brand-promotions.mjs";
@@ -84,6 +85,17 @@ test("an expired brand campaign automatically falls back to the active store pro
   assert.equal(effectiveCampaignDiscount(combined[0], new Date("2027-03-01T00:00:00.000Z").getTime()), 20);
   assert.equal(effectiveCampaignDiscount(combined[0], new Date("2027-04-02T00:00:00.000Z").getTime()), 10);
   assert.equal(effectiveCampaignDiscount(combined[0], new Date("2027-05-02T00:00:00.000Z").getTime()), 0);
+});
+
+test("a campaign price already calculated on the product page is not discounted again in the cart", () => {
+  const [promoted] = applyBrandPromotion([{ ...catalogue[0], price: 62.90 }], ALL_STORE_PROMOTION, 10, "2027-05-01T00:00:00.000Z");
+  const selectedPrice = promoted.price * (1 - effectiveCampaignDiscount(promoted, new Date("2027-03-01T00:00:00.000Z").getTime()) / 100);
+  const cartProduct = { ...clearCampaignPricing(promoted), price: selectedPrice };
+  assert.equal(Number(cartProduct.price.toFixed(2)), 56.61);
+  assert.equal(effectiveCampaignDiscount(cartProduct), null);
+  assert.equal(cartProduct.discount, undefined);
+  assert.equal(cartProduct.storePromotion, undefined);
+  assert.equal(cartProduct.brandPromotion, undefined);
 });
 
 test("ending a brand promotion restores each product's previous individual promotion", () => {

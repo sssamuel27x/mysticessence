@@ -16,7 +16,7 @@ import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
-import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, effectiveCampaignDiscount, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
+import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, clearCampaignPricing, effectiveCampaignDiscount, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
 import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
@@ -2837,14 +2837,12 @@ function ProductDetail({
     if (selectedSoldOut) return;
     const variantId = selectedVariant.volume.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     onCart({
-      ...product,
+      ...clearCampaignPricing(product),
       id: `${product.id}--${variantId}`,
       price: selectedPrice,
       volume: selectedVariant.volume,
       variants: [selectedVariant],
       isDecant: selectedVariant.isDecant,
-      discount: undefined,
-      promotionEndsAt: undefined,
     }, qty);
   }
 
