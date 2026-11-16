@@ -60,6 +60,8 @@ test("keeps admin pricing protected and its product editor responsive", async ()
   assert.doesNotMatch(decantStock, /Ainda não configurado/);
   assert.match(page, /saveProductGroup\(nextProduct, nextDecantProduct, editBaseline.current\)/);
   assert.match(page, /A sessão não tem permissão de administrador/);
+  assert.match(page, /order\.billing\?\.taxId \|\| order\.customer\.taxId/);
+  assert.match(page, /lang === "pt" \? "NIF" : "Tax number"/);
   assert.match(css, /\.admin-editor-modal\s*\{[^}]*width:\s*min\(1040px,/s);
   assert.match(css, /@media \(max-width: 980px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*repeat\(2,/);
   assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.admin-variant-stock-row\s*\{[^}]*minmax\(0, 1fr\)/);
