@@ -4453,7 +4453,7 @@ function AdminPage({
                     <h3>{copy.customer}</h3>
                     <p><User size={15} /><strong>{order.customer.name}</strong></p>
                     <p><Mail size={15} /><a href={`mailto:${order.customer.email}`}>{order.customer.email}</a></p>
-                    <p><Phone size={15} /><a href={`tel:${order.customer.phone}`}>{order.customer.phone}</a></p>
+                    <p><Phone size={15} /><a href={`tel:${order.customer.phone}`}>{order.customer.phone}</a></p>                     <p><ReceiptText size={15} /><span><strong>{lang === "pt" ? "NIF" : "Tax number"}:</strong> {order.billing?.taxId || order.customer.taxId || (lang === "pt" ? "Não indicado" : "Not provided")}</span></p>
                   </section>
                   <section>
                     <h3>{copy.delivery}</h3>
