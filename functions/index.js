@@ -1,4 +1,4 @@
-const { createHash, timingSafeEqual, randomUUID } = require("node:crypto");
+const { createHash, timingSafeEqual, randomUUID, randomBytes } = require("node:crypto");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -33,8 +33,28 @@ const ifthenpayPayshopKey = defineSecret("IFTHENPAY_PAYSHOP_KEY");
 const ifthenpayCardKey = defineSecret("IFTHENPAY_CARD_KEY");
 const callbackKey = defineSecret("IFTHENPAY_CALLBACK_KEY");
 const ownerEmail = defineSecret("OWNER_EMAIL");
-const publicSiteUrl = defineString("PUBLIC_SITE_URL", { default: "http://localhost:3000" });
+const publicSiteUrl = defineString("PUBLIC_SITE_URL", { default: "https://mysticessence.pt" });
 const adminAccountUid = "bFGr8AtlSGQTDZ9Nel9BVXB0csC2";
+
+const newsletterCouponCode = "MYSTICNEWS10";
+const newsletterTokenHash = token => createHash("sha256").update(text(token, 200)).digest("hex");
+const newsletterBaseUrl = () => process.env.FUNCTIONS_EMULATOR === "true"
+  ? "http://localhost:3000"
+  : publicSiteUrl.value().replace(/\/$/, "");
+
+function newsletterEmailHtml(title, paragraphs, extra = "") {
+  const content = paragraphs.map(line => `<p style="margin:0 0 16px;color:#e8dfd0;line-height:1.7">${html(line)}</p>`).join("");
+  return emailFrame(title, "Mystic Essence", `${content}${extra}`);
+}
+
+async function ensureNewsletterCoupon() {
+  const reference = db.collection("coupons").doc(newsletterCouponCode);
+  await db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists) transaction.create(reference, { code: newsletterCouponCode, discount: 10, createdAt: new Date().toISOString(), source: "newsletter-welcome" });
+    else if (Number(snapshot.data()?.discount) !== 10) throw new HttpsError("failed-precondition", "O código MYSTICNEWS10 já existe com outra configuração. Verifique-o no painel de cupões.");
+  });
+}
 
 exports.revokeMySessions = onCall(callableOptions, async request => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Inicie sessão.");
@@ -43,6 +63,37 @@ exports.revokeMySessions = onCall(callableOptions, async request => {
   await db.collection("sessionRevocations").doc(request.auth.uid).set({ revokedAt: now });
   await getAuth().revokeRefreshTokens(request.auth.uid);
   return { revoked: true };
+});
+
+// Give the dedicated local newsletter test account the admin claim used by
+// Firestore rules. This callable is deliberately disabled outside emulators.
+exports.ensureLocalNewsletterAdmin = onCall(callableOptions, async request => {
+  if (process.env.FUNCTIONS_EMULATOR !== "true") {
+    throw new HttpsError("not-found", "Esta operação só está disponível no ambiente local.");
+  }
+  if (!request.auth || request.auth.token.email !== "newsletter-admin@mystic.test") {
+    throw new HttpsError("permission-denied", "Só a conta local de teste pode usar esta operação.");
+  }
+  const user = await getAuth().getUser(request.auth.uid);
+  await getAuth().setCustomUserClaims(user.uid, { ...(user.customClaims || {}), admin: true });
+  return { admin: true };
+});
+
+exports.createLocalNewsletterAdminSession = onCall(callableOptions, async request => {
+  if (process.env.FUNCTIONS_EMULATOR !== "true") {
+    throw new HttpsError("not-found", "Esta operação só está disponível no ambiente local.");
+  }
+  const localUid = "local-newsletter-admin";
+  const localEmail = "newsletter-admin@mystic.test";
+  try {
+    await getAuth().getUser(localUid);
+  } catch (error) {
+    if (error.code !== "auth/user-not-found") throw error;
+    await getAuth().createUser({ uid: localUid, email: localEmail, emailVerified: true, displayName: "Administrador local Mystic" });
+  }
+  await getAuth().setCustomUserClaims(localUid, { admin: true });
+  const customToken = await getAuth().createCustomToken(localUid, { admin: true });
+  return { customToken };
 });
 
 const currency = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
@@ -64,7 +115,9 @@ function text(value, max = 500) {
 
 function requireAdmin(request) {
   if (!request.auth) throw new HttpsError("unauthenticated", "Inicie sessão como administrador.");
-  if (request.auth.token.admin !== true && request.auth.uid !== adminAccountUid) {
+  const localNewsletterAdmin = process.env.FUNCTIONS_EMULATOR === "true"
+    && request.auth.token.email === "newsletter-admin@mystic.test";
+  if (request.auth.token.admin !== true && request.auth.uid !== adminAccountUid && !localNewsletterAdmin) {
     throw new HttpsError("permission-denied", "Apenas o administrador pode realizar esta operação.");
   }
 }
@@ -1571,3 +1624,92 @@ async function sendRestockNotifications(productId, after, availableVolumes, subs
     });
   }));
 }
+
+exports.subscribeNewsletter = onCall(callableOptions, async request => {
+  const email = text(request.data?.email, 180).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpsError("invalid-argument", "Indique um email válido.");
+  if (request.data?.consent !== true) throw new HttpsError("failed-precondition", "É necessário aceitar receber comunicações promocionais.");
+  await rateLimit(db, request, "newsletter", [`email:${email}`]);
+
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = newsletterTokenHash(token);
+  const subscriptionId = createHash("sha256").update(email).digest("hex");
+  const reference = db.collection("newsletterSubscriptions").doc(subscriptionId);
+  const previous = await reference.get();
+  if (previous.exists && previous.data()?.status === "active") return { status: "active", alreadySubscribed: true };
+  await reference.set({ email, status: "pending", consent: true, consentAt: new Date().toISOString(), confirmationTokenHash: tokenHash, confirmationExpiresAt: Date.now() + 24 * 60 * 60 * 1000, updatedAt: new Date().toISOString() }, { merge: true });
+
+  const confirmationUrl = `${newsletterBaseUrl()}/?newsletterConfirm=${encodeURIComponent(token)}`;
+  const body = newsletterEmailHtml("Confirme a sua inscrição", ["Para concluir a sua inscrição na newsletter da Mystic Essence, confirme o seu endereço de email.", "Só enviaremos campanhas depois desta confirmação."], `<p style="margin:24px 0"><a href="${html(confirmationUrl)}" style="display:inline-block;padding:14px 20px;background:#d6ab4b;color:#090806;text-decoration:none;font-weight:700">Confirmar inscrição</a></p>`);
+  await queueEmail(email, "Confirme a sua inscrição · Mystic Essence", body, `newsletter-confirm-${subscriptionId}-${tokenHash.slice(0, 16)}`);
+  return { status: "pending", alreadySubscribed: false, emailQueued: true, localConfirmationUrl: process.env.FUNCTIONS_EMULATOR === "true" ? confirmationUrl : undefined };
+});
+
+exports.confirmNewsletterSubscription = onCall(callableOptions, async request => {
+  const token = text(request.data?.token, 200);
+  if (!token) throw new HttpsError("invalid-argument", "Ligação de confirmação inválida.");
+  const tokenHash = newsletterTokenHash(token);
+  const snapshot = await db.collection("newsletterSubscriptions").where("confirmationTokenHash", "==", tokenHash).limit(1).get();
+  if (snapshot.empty) throw new HttpsError("not-found", "Esta ligação de confirmação já não é válida.");
+  const reference = snapshot.docs[0].ref;
+  const subscription = snapshot.docs[0].data();
+  if (subscription.status === "active" && subscription.welcomeEmailQueuedAt) return { status: "active", couponCode: newsletterCouponCode };
+  if (Number(subscription.confirmationExpiresAt) < Date.now()) throw new HttpsError("deadline-exceeded", "A ligação expirou. Inscreva-se novamente para receber uma nova.");
+  await ensureNewsletterCoupon();
+  const unsubscribeToken = randomBytes(32).toString("base64url");
+  const unsubscribeHash = newsletterTokenHash(unsubscribeToken);
+  const unsubscribeUrl = `${newsletterBaseUrl()}/?newsletterUnsubscribe=${encodeURIComponent(unsubscribeToken)}`;
+  const welcome = newsletterEmailHtml("Bem-vinda à newsletter Mystic Essence", ["A sua inscrição está confirmada.", `Use o código ${newsletterCouponCode} para receber 10% de desconto na sua próxima compra.`], `<p style="margin:24px 0;padding:18px;border:1px solid #d6ab4b;text-align:center;color:#f2d37d;font-size:22px;font-weight:700;letter-spacing:2px">${newsletterCouponCode}</p><p style="margin-top:28px;font-size:12px;color:#aaa"><a href="${html(unsubscribeUrl)}" style="color:#d6ab4b">Cancelar subscrição</a></p>`);
+  await queueEmail(subscription.email, "A sua oferta de boas-vindas · Mystic Essence", welcome, `newsletter-welcome-${reference.id}`);
+  await reference.update({ status: "active", confirmedAt: subscription.confirmedAt || new Date().toISOString(), confirmationTokenHash: FieldValue.delete(), confirmationExpiresAt: FieldValue.delete(), unsubscribeTokenHashes: [unsubscribeHash], welcomeEmailQueuedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  return { status: "active", couponCode: newsletterCouponCode, welcomeEmailQueued: true };
+});
+
+exports.unsubscribeNewsletter = onCall(callableOptions, async request => {
+  const token = text(request.data?.token, 200);
+  if (!token) throw new HttpsError("invalid-argument", "Ligação de cancelamento inválida.");
+  const tokenHash = newsletterTokenHash(token);
+  const snapshot = await db.collection("newsletterSubscriptions").where("unsubscribeTokenHashes", "array-contains", tokenHash).limit(1).get();
+  if (snapshot.empty) throw new HttpsError("not-found", "Esta ligação de cancelamento já não é válida.");
+  await snapshot.docs[0].ref.update({ status: "unsubscribed", unsubscribedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  return { status: "unsubscribed" };
+});
+
+exports.sendNewsletterCampaign = onCall(callableOptions, async request => {
+  requireAdmin(request);
+  if (process.env.FUNCTIONS_EMULATOR === "true") throw new HttpsError("failed-precondition", "O envio de campanhas está disponível apenas no site publicado.");
+  const subject = text(request.data?.subject, 140);
+  const message = text(request.data?.message, 5000);
+  const images = Array.isArray(request.data?.images) ? request.data.images.slice(0, 4) : [];
+  if (!subject || !message) throw new HttpsError("invalid-argument", "Indique o assunto e a mensagem da newsletter.");
+  const safeImages = images.map(image => {
+    const url = text(image?.url, 1000);
+    if (!/^https:\/\//i.test(url)) throw new HttpsError("invalid-argument", "As imagens da campanha têm de estar disponíveis através de um endereço HTTPS.");
+    return `<img src="${html(url)}" alt="${html(text(image?.alt, 160))}" style="display:block;width:100%;height:auto;margin:16px 0">`;
+  }).join("");
+  const active = await db.collection("newsletterSubscriptions").where("status", "==", "active").get();
+  if (active.empty) return { queued: 0 };
+  const batches = [];
+  for (let offset = 0; offset < active.docs.length; offset += 400) batches.push(active.docs.slice(offset, offset + 400));
+  let queued = 0;
+  for (const batch of batches) {
+    await Promise.all(batch.map(async docSnapshot => {
+      const data = docSnapshot.data();
+      if (data.status !== "active") return;
+      const token = randomBytes(32).toString("base64url");
+      const tokenHash = newsletterTokenHash(token);
+      const unsubscribeUrl = `${newsletterBaseUrl()}/?newsletterUnsubscribe=${encodeURIComponent(token)}`;
+      await docSnapshot.ref.update({ unsubscribeTokenHashes: FieldValue.arrayUnion(tokenHash), updatedAt: new Date().toISOString() });
+      const body = newsletterEmailHtml(subject, message.split(/\n\s*\n/).filter(Boolean), `${safeImages}<p style="margin-top:28px;font-size:12px;color:#aaa"><a href="${html(unsubscribeUrl)}" style="color:#d6ab4b">Cancelar subscrição</a></p>`);
+      await queueEmail(data.email, `${subject} · Mystic Essence`, body, `newsletter-campaign-${Date.now()}-${docSnapshot.id}`);
+      queued += 1;
+    }));
+  }
+  return { queued };
+});
+
+exports.getNewsletterAudience = onCall(callableOptions, async request => {
+  requireAdmin(request);
+  const snapshot = await db.collection("newsletterSubscriptions").where("status", "==", "active").get();
+  return { activeCount: snapshot.size };
+});

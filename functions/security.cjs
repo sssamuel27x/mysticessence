@@ -10,7 +10,7 @@ const hash = value => createHash('sha256').update(JSON.stringify(canonical(value
 
 async function rateLimit(db, request, action, identities = []) {
   // rawRequest.ip is supplied by the Cloud Functions HTTP adapter, not the payload.
-  const ip = request.rawRequest?.ip;
+  const ip = request.rawRequest?.ip || (process.env.FUNCTIONS_EMULATOR === 'true' ? '127.0.0.1' : null);
   if (!ip) throw new HttpsError('failed-precondition', 'Não foi possível validar o pedido.');
   const subjects = [[`ip:${ip}`, 40], ...identities.filter(Boolean).map(value => [value, 8])];
   if (request.auth) subjects.push([`uid:${request.auth.uid}`, 20]);
