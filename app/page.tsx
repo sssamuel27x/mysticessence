@@ -1774,7 +1774,7 @@ function Storefront() {
         )}
       </main>
 
-      <Footer t={t} onLegal={openLegal} onCookies={() => setCookiePanelOpen(true)} />
+      <Footer t={t} lang={lang} onLegal={openLegal} onCookies={() => setCookiePanelOpen(true)} />
 
       {newsletterPopupOpen && <NewsletterWelcomeDialog lang={lang} result={newsletterPopupResult} onClose={() => {
         window.localStorage.setItem("mystic-newsletter-dismissed-until", String(Date.now() + 30 * 24 * 60 * 60 * 1000));
@@ -5847,7 +5847,41 @@ function CookieConsent({
   );
 }
 
-function Footer({ t, onLegal, onCookies }: { t: (typeof COPY)[Lang]; onLegal: (kind: LegalKind) => void; onCookies: () => void }) {
+function Footer({ t, lang, onLegal, onCookies }: { t: (typeof COPY)[Lang]; lang: Lang; onLegal: (kind: LegalKind) => void; onCookies: () => void }) {
+  const [newsletterEmail, setNewsletterEmail] = useState("");
+  const [newsletterConsent, setNewsletterConsent] = useState(false);
+  const [newsletterBusy, setNewsletterBusy] = useState(false);
+  const [newsletterMessage, setNewsletterMessage] = useState("");
+  const [newsletterError, setNewsletterError] = useState(false);
+  async function subscribeFromFooter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!newsletterConsent) {
+      setNewsletterMessage(lang === "pt" ? "Aceite receber emails para continuar." : "Please consent to receive emails to continue.");
+      setNewsletterError(true);
+      return;
+    }
+    setNewsletterBusy(true);
+    setNewsletterMessage("");
+    setNewsletterError(false);
+    try {
+      const response = await subscribeToNewsletter({ email: newsletterEmail.trim().toLowerCase(), consent: true });
+      if (response.status === "active") {
+        setNewsletterMessage(lang === "pt" ? "Este email já está inscrito na newsletter." : "This email is already subscribed to the newsletter.");
+      } else if (response.emailQueued) {
+        setNewsletterMessage(lang === "pt" ? "Enviámos um email de confirmação. Confirme a inscrição para receber o seu desconto de 10%." : "We sent a confirmation email. Confirm your subscription to receive your 10% discount.");
+        setNewsletterEmail("");
+        setNewsletterConsent(false);
+      } else {
+        setNewsletterMessage(lang === "pt" ? "Não foi possível enviar o email de confirmação. Tente novamente dentro de instantes." : "We couldn't send the confirmation email. Please try again shortly.");
+        setNewsletterError(true);
+      }
+    } catch (error) {
+      setNewsletterMessage(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível iniciar a inscrição. Tente novamente." : "We couldn't start the signup. Please try again."));
+      setNewsletterError(true);
+    } finally {
+      setNewsletterBusy(false);
+    }
+  }
   const legalLink = (kind: LegalKind, label: string) => (
     <a href={LEGAL_PATHS[kind]} onClick={(event) => { event.preventDefault(); onLegal(kind); }}><span>{label}</span><ChevronRight size={16} /></a>
   );
@@ -5866,6 +5900,23 @@ function Footer({ t, onLegal, onCookies }: { t: (typeof COPY)[Lang]; onLegal: (k
             <a href="https://www.tiktok.com/@_mystic.essence_" target="_blank" rel="noreferrer" aria-label="TikTok Mystic Essence"><Music2 size={18} /></a>
           </div>
         </div>
+
+        <section className="footer-newsletter" aria-labelledby="footer-newsletter-title">
+          <div className="footer-newsletter-copy">
+            <span>{lang === "pt" ? "MYSTIC ESSENCE · NEWSLETTER" : "MYSTIC ESSENCE · NEWSLETTER"}</span>
+            <h3 id="footer-newsletter-title">{lang === "pt" ? "Recebe novidades e 10% de desconto" : "Get our news and 10% off"}</h3>
+            <p>{lang === "pt" ? "Inscreve-te para receber novidades e campanhas. A inscrição só fica ativa depois de confirmares o email." : "Sign up for news and offers. Your subscription becomes active after you confirm your email."}</p>
+          </div>
+          <form className="footer-newsletter-form" onSubmit={subscribeFromFooter}>
+            <label className="footer-newsletter-email">
+              <span className="sr-only">Email</span>
+              <input type="email" value={newsletterEmail} onChange={(event) => setNewsletterEmail(event.target.value)} autoComplete="email" placeholder={lang === "pt" ? "O teu endereço de email" : "Your email address"} required />
+              <button type="submit" disabled={newsletterBusy}>{newsletterBusy ? (lang === "pt" ? "A enviar…" : "Sending…") : (lang === "pt" ? "Inscrever" : "Subscribe")}<ChevronRight size={17} /></button>
+            </label>
+            <label className="footer-newsletter-consent"><input type="checkbox" checked={newsletterConsent} onChange={(event) => setNewsletterConsent(event.target.checked)} /><span>{lang === "pt" ? "Aceito receber novidades e campanhas por email. Posso cancelar a qualquer momento." : "I agree to receive news and offers by email. I can unsubscribe at any time."}</span></label>
+            {newsletterMessage && <p className={newsletterError ? "footer-newsletter-feedback is-error" : "footer-newsletter-feedback"} role={newsletterError ? "alert" : "status"}>{newsletterMessage}</p>}
+          </form>
+        </section>
 
         <div className="footer-grid">
           <section className="footer-contact-panel">
