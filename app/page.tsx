@@ -17,20 +17,24 @@ import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-av
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
 import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, clearCampaignPricing, effectiveCampaignDiscount, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
+import { buildNewsletterCampaignHtml, MAX_NEWSLETTER_CAMPAIGN_IMAGES, validateNewsletterCampaignImages, type NewsletterCampaignImage } from "./newsletter-email";
 import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
 import { LOYALTY_REWARDS, loyaltyDiscountForSubtotal, loyaltyRewardById } from "../functions/loyalty.mjs";
 import { CHECKOUT_TERMS_VERSION } from "../functions/legal.mjs";
 import {
   createCheckout,
+  confirmNewsletterSubscription,
   deleteFavoriteFolder,
   grantLoyaltyPoints,
   removeLoyaltyPoints,
   type IfthenpayCheckoutResult,
   firebaseEnabled,
+  getNewsletterAudience,
   paymentsEnabled,
   storageEnabled,
   loginWithEmail,
+  loginAsLocalNewsletterAdmin,
   loginWithGoogle,
   logoutFirebase,
   registerWithEmail,
@@ -47,13 +51,17 @@ import {
   releaseCancelledPayment,
   saveFavoriteFolders,
   saveHomeHeroImages,
+  sendNewsletterCampaign,
   setInfluencerAccount,
   seedProducts,
   submitReview as submitFirebaseReview,
   subscribeToRestock,
+  subscribeToNewsletter,
   updateOrder as updateFirebaseOrder,
+  unsubscribeFromNewsletter,
   uploadProductImage,
   uploadHomeHeroImage,
+  uploadNewsletterCampaignImage,
   validateCoupon,
   watchCoupons,
   watchDecantPricing,
@@ -1229,6 +1237,8 @@ function Storefront() {
   const [legalKind, setLegalKind] = useState<LegalKind>("terms");
   const [cookieChoice, setCookieChoice] = useState<"accepted" | "rejected" | null>(null);
   const [cookiePanelOpen, setCookiePanelOpen] = useState(false);
+  const [newsletterPopupOpen, setNewsletterPopupOpen] = useState(false);
+  const [newsletterPopupResult, setNewsletterPopupResult] = useState("");
   const [rawCatalog, setCatalog] = useState<Product[]>(INITIAL_PRODUCTS);
   const [homeHeroImages, setHomeHeroImages] = useState<HomeHeroImage[]>(DEFAULT_HOME_HERO_IMAGES);
   const { blockedSizes, ready: decantsReady, error: decantsError } = useDecantAvailability();
@@ -1307,6 +1317,32 @@ function Storefront() {
   }, []);
 
   useEffect(() => {
+    if (view !== "home") return;
+    const timer = window.setTimeout(() => {
+      const dismissedUntil = Number(window.localStorage.getItem("mystic-newsletter-dismissed-until") || 0);
+      const url = new URL(window.location.href);
+      if (import.meta.env.DEV && url.searchParams.get("newsletterPreview") === "1") {
+        setNewsletterPopupOpen(true);
+        return;
+      }
+      const confirmationToken = url.searchParams.get("newsletterConfirm");
+      const unsubscribeToken = url.searchParams.get("newsletterUnsubscribe");
+      if (confirmationToken) {
+        void confirmNewsletterSubscription(confirmationToken).then(result => setNewsletterPopupResult(
+          `Inscrição confirmada. O email de agradecimento foi entregue ao serviço de envio da loja. Use ${result.couponCode} para receber 10% de desconto.`
+        )).catch(() => setNewsletterPopupResult("A ligação expirou ou já foi utilizada. Faça uma nova inscrição para receber outro email de confirmação." )).finally(() => { url.searchParams.delete("newsletterConfirm"); window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`); setNewsletterPopupOpen(true); });
+        return;
+      }
+      if (unsubscribeToken) {
+        void unsubscribeFromNewsletter(unsubscribeToken).then(() => setNewsletterPopupResult("A subscrição foi cancelada. Não receberá mais newsletters.")).catch(() => setNewsletterPopupResult("Esta ligação de cancelamento já não é válida.")).finally(() => { url.searchParams.delete("newsletterUnsubscribe"); window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`); setNewsletterPopupOpen(true); });
+        return;
+      }
+      if (Date.now() > dismissedUntil) setNewsletterPopupOpen(true);
+    }, 1400);
+    return () => window.clearTimeout(timer);
+  }, [view]);
+
+  useEffect(() => {
     document.body.classList.toggle("drawer-lock", cartOpen || mobileOpen);
     return () => document.body.classList.remove("drawer-lock");
   }, [cartOpen, mobileOpen]);
@@ -1370,6 +1406,9 @@ function Storefront() {
   useEffect(() => {
     if (!firebaseEnabled) return;
     return watchProducts<Product>((products) => {
+        // Local Firebase emulators start with no catalogue. Keep the bundled
+        // preview products so the storefront remains navigable while testing.
+        if (import.meta.env.DEV && products.length === 0) return;
         setCatalog(products.map((product) => {
           const normalizedProduct = {
             ...product,
@@ -1736,6 +1775,11 @@ function Storefront() {
       </main>
 
       <Footer t={t} onLegal={openLegal} onCookies={() => setCookiePanelOpen(true)} />
+
+      {newsletterPopupOpen && <NewsletterWelcomeDialog lang={lang} result={newsletterPopupResult} onClose={() => {
+        window.localStorage.setItem("mystic-newsletter-dismissed-until", String(Date.now() + 30 * 24 * 60 * 60 * 1000));
+        setNewsletterPopupOpen(false);
+      }} />}
       <CartDrawer
         t={t}
         lang={lang}
@@ -3231,6 +3275,7 @@ function AccountPage({
   const [loginEmail, setLoginEmail] = useState("");
   const [recoveryEmail, setRecoveryEmail] = useState("");
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [newsletterConsent, setNewsletterConsent] = useState(false);
   const [accountMessage, setAccountMessage] = useState("");
   const copy = lang === "pt" ? {
     eyebrow: "Área de cliente",
@@ -3281,7 +3326,17 @@ function AccountPage({
     try {
       if (!firebaseEnabled) throw new Error(lang === "pt" ? "A ligação Firebase ainda não está configurada neste ambiente." : "Firebase is not configured in this environment yet.");
       if (mode === "login") await loginWithEmail(email, password);
-      else await registerWithEmail(name, email, password);
+      else {
+        await registerWithEmail(name, email, password);
+        if (newsletterConsent) {
+          try {
+            await subscribeToNewsletter({ email, consent: true });
+            setAccountMessage(lang === "pt" ? "Conta criada. Enviámos um email para confirmares a inscrição na newsletter." : "Account created. We sent an email to confirm your newsletter subscription.");
+          } catch {
+            setAccountMessage(lang === "pt" ? "Conta criada, mas não foi possível pedir a inscrição na newsletter. Podes inscrever-te pelo popup da loja." : "Account created, but newsletter signup could not be started. You can subscribe from the store popup.");
+          }
+        }
+      }
     } catch {
       setAuthError(lang === "pt" ? "Não foi possível entrar. Verifique os dados ou tente novamente mais tarde." : "Could not sign in. Check your details or try again later.");
     } finally {
@@ -3296,6 +3351,20 @@ function AccountPage({
       await loginWithGoogle();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : (lang === "pt" ? "Não foi possível entrar com Google." : "Could not sign in with Google."));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function localAdminAccount() {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      await loginAsLocalNewsletterAdmin();
+    } catch (error) {
+      setAuthError(import.meta.env.DEV && error instanceof Error
+        ? error.message
+        : (lang === "pt" ? "Não foi possível iniciar a sessão de teste local. Confirme que os emuladores Firebase estão ligados." : "Could not start the local test session. Check that Firebase emulators are running."));
     } finally {
       setAuthBusy(false);
     }
@@ -3557,11 +3626,15 @@ function AccountPage({
         <button className="google-button" onClick={googleAccount} disabled={authBusy}>
           <span>G</span>{copy.google}
         </button>
+        {import.meta.env.DEV && <button className="ghost-button local-admin-test-login" type="button" onClick={() => void localAdminAccount()} disabled={authBusy}>
+          <LockKeyhole size={16} />{lang === "pt" ? "Aceder ao painel de teste local" : "Open local test admin"}
+        </button>}
         <div className="auth-divider"><span>{copy.divider}</span></div>
         <form className="account-form" onSubmit={submitAccount}>
           {mode === "register" && <label className="field"><span>{copy.name}</span><input name="name" autoComplete="name" required /></label>}
           <label className="field"><span>{copy.email}</span><input name="email" type="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /></label>
           <label className="field"><span>{copy.password}</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required /></label>
+          {mode === "register" && <label className="newsletter-consent account-newsletter-consent"><input type="checkbox" checked={newsletterConsent} onChange={event => setNewsletterConsent(event.target.checked)} /><span>{lang === "pt" ? "Quero receber novidades e campanhas da Mystic Essence por email. Posso cancelar a qualquer momento." : "I want to receive Mystic Essence news and offers by email. I can unsubscribe at any time."}</span></label>}
           <button className="primary-button" type="submit" disabled={authBusy}>{authBusy ? (lang === "pt" ? "Aguarde..." : "Please wait...") : mode === "login" ? copy.login : copy.register}</button>
         </form>
         {mode === "login" && <button type="button" className="icon-text-button" onClick={() => { setRecoveryOpen(!recoveryOpen); setRecoveryEmail((current) => current || loginEmail); setAccountMessage(""); }}><LockKeyhole size={16} />{lang === "pt" ? "Esqueceu-se da palavra-passe?" : "Forgot your password?"}</button>}
@@ -3694,6 +3767,7 @@ function AdminPage({
   const [couponOpen, setCouponOpen] = useState(false);
   const [influencersOpen, setInfluencersOpen] = useState(false);
   const [loyaltyPointsOpen, setLoyaltyPointsOpen] = useState(false);
+  const [newsletterOpen, setNewsletterOpen] = useState(false);
   const [homeHeroOpen, setHomeHeroOpen] = useState(false);
   const [homeHeroDraft, setHomeHeroDraft] = useState<DraftHomeHeroImage[]>([]);
   const [homeHeroError, setHomeHeroError] = useState("");
@@ -4302,12 +4376,13 @@ function AdminPage({
     <section className="admin-page">
       <header className="admin-heading">
         <div><span className="eyebrow">Mystic Essence Admin</span><h1>{copy.title}</h1><p>{session.email}</p></div>
-        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={openHomeHeroManager}><Camera size={17} />{lang === "pt" ? "Imagens iniciais" : "Homepage images"}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoções da loja" : "Store promotions"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
+        <div className="admin-heading-actions"><button className="ghost-button" onClick={onShop}>{copy.store}</button><button className={`ghost-button ${adminView === "orders" ? "active" : ""}`} onClick={() => setAdminView((view) => view === "orders" ? "inventory" : "orders")}><ClipboardList size={17} />{adminView === "orders" ? copy.inventory : (lang === "pt" ? "Encomendas" : "Orders")} {adminView !== "orders" && `(${activeOrders.length})`}</button><button className="ghost-button" onClick={openHomeHeroManager}><Camera size={17} />{lang === "pt" ? "Imagens iniciais" : "Homepage images"}</button><button className="ghost-button" onClick={() => setNewsletterOpen(true)}><Mail size={17} />{lang === "pt" ? "Enviar newsletter" : "Send newsletter"}</button><button className="ghost-button" onClick={() => setShippingOpen(true)}><Truck size={17} />{lang === "pt" ? "Portes" : "Shipping"}</button><button className="ghost-button" onClick={() => setDecantPricingOpen(true)}><SlidersHorizontal size={17} />{lang === "pt" ? "Decants" : "Decants"}</button><button className="ghost-button" onClick={() => setBrandsOpen(true)}><Tag size={17} />{lang === "pt" ? "Criar marca" : "Create brand"}</button><button className="ghost-button" onClick={openBrandPromotions}><TicketPercent size={17} />{lang === "pt" ? "Promoções da loja" : "Store promotions"}</button><button className="ghost-button admin-coupon-button" onClick={() => setCouponOpen(true)}><TicketPercent size={17} />{copy.coupon}</button><button className="ghost-button" onClick={() => setLoyaltyPointsOpen(true)}><Sparkles size={17} />{lang === "pt" ? "Gerir pontos" : "Manage points"}</button><button className="ghost-button" onClick={() => setInfluencersOpen(true)}><User size={17} />{lang === "pt" ? "Gerir influencers" : "Manage influencers"}</button><button className="icon-text-button" onClick={() => void onLogout()}><LogOut size={16} />{copy.logout}</button></div>
       </header>
 
       <RevokeSessionsButton lang={lang} disabled={adminBusy} />
       {shippingOpen && <ShippingSettingsDialog lang={lang} onClose={() => setShippingOpen(false)} />}
       {brandsOpen && <BrandSettingsDialog lang={lang} onClose={() => setBrandsOpen(false)} onCreated={editorOpen ? (brand) => { setDraft((current) => ({ ...current, brand })); setBrandsOpen(false); } : undefined} />}
+      {newsletterOpen && <NewsletterCampaignDialog lang={lang} onClose={() => setNewsletterOpen(false)} />}
       {homeHeroOpen && <>
         <button className="modal-backdrop" onClick={closeHomeHeroManager} aria-label={copy.cancel} />
         <form className="home-hero-manager" onSubmit={saveHomeHero} role="dialog" aria-modal="true" aria-labelledby="home-hero-manager-title">
@@ -4684,6 +4759,164 @@ function AdminPage({
       </div>}
     </section>
   );
+}
+
+function NewsletterWelcomeDialog({ lang, result, onClose }: { lang: Lang; result: string; onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [message, setMessage] = useState("");
+  const [subscribed, setSubscribed] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [localConfirmationUrl, setLocalConfirmationUrl] = useState("");
+  const success = confirmed || result.includes("confirmada") || result.includes("cancelada");
+  const completed = subscribed || Boolean(result);
+  async function subscribe(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!consent) { setMessage(lang === "pt" ? "Aceite receber novidades por email para continuar." : "Please consent to email updates to continue."); return; }
+    setBusy(true);
+    try {
+      const response = await subscribeToNewsletter({ email: email.trim().toLowerCase(), consent: true });
+      if (response.status === "active") { setConfirmed(true); setSubscribed(true); setMessage("Já está inscrito. Use MYSTICNEWS10 para receber 10% de desconto."); }
+      else {
+        setSubscribed(true);
+        setMessage(response.emailQueued
+          ? "Enviámos um email de confirmação para o endereço indicado. Confirme a inscrição para receber o código MYSTICNEWS10."
+          : "Não foi possível enviar o email de confirmação. Tente novamente dentro de instantes.");
+        setLocalConfirmationUrl(response.localConfirmationUrl || "");
+      }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível iniciar a inscrição. Tente novamente dentro de instantes."); }
+    finally { setBusy(false); }
+  }
+  return <>
+    <button className="modal-backdrop newsletter-welcome-backdrop" onClick={onClose} aria-label={lang === "pt" ? "Fechar inscrição" : "Close signup"} />
+    <section className="newsletter-welcome" role="dialog" aria-modal="true" aria-labelledby="newsletter-welcome-title">
+      <button className="newsletter-welcome-close" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={18} /></button>
+      <span className="eyebrow">MYSTIC ESSENCE · NEWSLETTER</span>
+      <h2 id="newsletter-welcome-title">{completed ? (lang === "pt" ? (confirmed || result.includes("confirmada") ? "Inscrição confirmada" : "Só falta confirmar") : (confirmed ? "Subscription confirmed" : "One last step")) : (lang === "pt" ? "Um presente para a tua próxima essência" : "A gift for your next signature scent")}</h2>
+      <p>{result || message || (lang === "pt" ? "Recebe novidades e 10% de desconto na tua próxima compra." : "Get our news and 10% off your next order.")}</p>
+      {!completed ? <form onSubmit={subscribe}>
+        <label className="field"><span>Email</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="o-teu@email.pt" required /></label>
+        <label className="newsletter-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>{lang === "pt" ? "Aceito receber novidades e campanhas da Mystic Essence por email. Posso cancelar a qualquer momento." : "I agree to receive Mystic Essence news and offers by email. I can unsubscribe at any time."}</span></label>
+        {message && <p className="newsletter-welcome-error" role="alert">{message}</p>}
+        <button className="primary-button" type="submit" disabled={busy}>{busy ? "Aguarde…" : (lang === "pt" ? "Inscrever-me e receber 10%" : "Subscribe and get 10% off")}</button>
+      </form> : <>
+        {localConfirmationUrl && <a className="primary-button newsletter-local-confirm" href={localConfirmationUrl}>Confirmar inscrição</a>}
+        {(confirmed || result.includes("confirmada")) && <div className="newsletter-coupon-code"><span>{lang === "pt" ? "O TEU CÓDIGO" : "YOUR CODE"}</span><strong>MYSTICNEWS10</strong><small>{lang === "pt" ? "10% de desconto" : "10% off"}</small></div>}
+      </>}
+      {!success && <small className="newsletter-welcome-footnote">{lang === "pt" ? "Ao fechar, esta janela fica escondida neste dispositivo durante 30 dias." : "Closing this window hides it on this device for 30 days."}</small>}
+      {success && <button className="ghost-button newsletter-welcome-done" onClick={onClose}>{lang === "pt" ? "Continuar a explorar" : "Continue browsing"}</button>}
+    </section>
+  </>;
+}
+
+function NewsletterCampaignDialog({ lang, onClose }: { lang: Lang; onClose: () => void }) {
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [images, setImages] = useState<NewsletterCampaignImage[]>([]);
+  const [imageUrl, setImageUrl] = useState("");
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const [sending, setSending] = useState(false);
+  const [activeCount, setActiveCount] = useState<number | null>(null);
+  const [audienceError, setAudienceError] = useState("");
+  const previewHtml = useMemo(() => buildNewsletterCampaignHtml({ subject, message, images }), [images, message, subject]);
+
+  useEffect(() => {
+    void getNewsletterAudience().then(({ activeCount: count }) => setActiveCount(count)).catch(() => setAudienceError("Não foi possível carregar a lista. Confirme a sessão de administrador e que o Firebase local está iniciado."));
+  }, []);
+
+  async function addImages(files: File[]) {
+    if (!files.length) return;
+    const validation = validateNewsletterCampaignImages(files, images.length);
+    if (validation) {
+      setError(validation === "count"
+        ? (lang === "pt" ? `Pode adicionar até ${MAX_NEWSLETTER_CAMPAIGN_IMAGES} imagens.` : `You can add up to ${MAX_NEWSLETTER_CAMPAIGN_IMAGES} images.`)
+        : validation === "type"
+          ? (lang === "pt" ? "Escolha apenas imagens JPG, PNG ou WebP." : "Choose JPG, PNG or WebP images only.")
+          : (lang === "pt" ? "Cada imagem deve ter menos de 5 MB." : "Each image must be under 5 MB."));
+      return;
+    }
+    const additions = await Promise.all(files.map(async (file) => {
+      const uploaded = await uploadNewsletterCampaignImage(file);
+      return { id: crypto.randomUUID(), name: file.name, dataUrl: uploaded.imageUrl } satisfies NewsletterCampaignImage;
+    }));
+    setImages((current) => [...current, ...additions]);
+    setError("");
+    setStatus("");
+  }
+
+  function addImageUrl() {
+    let parsed: URL;
+    try { parsed = new URL(imageUrl.trim()); } catch { setError("Indique um endereço de imagem válido."); return; }
+    if (parsed.protocol !== "https:") { setError("A imagem tem de estar num endereço público HTTPS."); return; }
+    if (images.length >= MAX_NEWSLETTER_CAMPAIGN_IMAGES) { setError(`Pode adicionar até ${MAX_NEWSLETTER_CAMPAIGN_IMAGES} imagens.`); return; }
+    setImages((current) => [...current, { id: crypto.randomUUID(), name: parsed.hostname, dataUrl: parsed.toString() }]);
+    setImageUrl(""); setError(""); setStatus("");
+  }
+
+  async function sendNewsletter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!subject.trim() || subject.trim().length > 140) {
+      setError(lang === "pt" ? "Escreva um assunto com até 140 caracteres." : "Write a subject up to 140 characters.");
+      setStatus(""); return;
+    }
+    if (!message.trim() || message.trim().length > 5000) {
+      setError(lang === "pt" ? "Escreva uma mensagem com até 5000 caracteres." : "Write a message up to 5000 characters.");
+      setStatus("");
+      return;
+    }
+    if (images.some((image) => !/^https:\/\//i.test(image.dataUrl))) {
+      setError(lang === "pt" ? "As imagens da campanha têm de estar disponíveis num endereço HTTPS público. Adicione-as através do endereço da imagem." : "Campaign images must be available at a public HTTPS address. Add them using the image URL.");
+      setStatus("");
+      return;
+    }
+    if (activeCount === null) { setError(audienceError || (lang === "pt" ? "A lista de subscritores não está disponível." : "Subscriber list is unavailable.")); return; }
+    if (!activeCount) { setError(lang === "pt" ? "Ainda não existem inscrições confirmadas para receber a campanha." : "There are no confirmed subscribers to receive this campaign yet."); return; }
+    if (!window.confirm(lang === "pt" ? `Enviar “${subject.trim()}” para ${activeCount} subscritor(es) confirmados?` : `Send “${subject.trim()}” to ${activeCount} confirmed subscribers?`)) return;
+    setError("");
+    setSending(true);
+    try {
+      const result = await sendNewsletterCampaign({ subject: subject.trim(), message: message.trim(), images: images.map((image) => ({ url: image.dataUrl, alt: image.name })) });
+      setStatus(`Campanha enviada para o serviço de email e colocada na fila para ${result.queued} subscritor(es).`);
+    } catch (sendError) {
+      const code = String((sendError as { code?: string })?.code || "");
+      setError(code.includes("unavailable") || code.includes("not-found")
+        ? (lang === "pt" ? "O serviço da newsletter está temporariamente indisponível. Tente novamente dentro de instantes." : "The newsletter service is temporarily unavailable. Please try again shortly.")
+        : (lang === "pt" ? "Não foi possível colocar a campanha na fila. Verifique a sessão de administrador e tente novamente." : "Could not queue the campaign. Check the admin session and try again."));
+    } finally { setSending(false); }
+  }
+
+  return <>
+    <button className="modal-backdrop newsletter-test-backdrop" onClick={onClose} aria-label={lang === "pt" ? "Fechar newsletter" : "Close newsletter"} />
+    <form className="newsletter-test-manager" onSubmit={sendNewsletter} role="dialog" aria-modal="true" aria-labelledby="newsletter-test-title">
+      <header>
+        <div><Mail size={22} /><div><span className="eyebrow">Mystic Essence Admin · {lang === "pt" ? "Newsletter" : "Newsletter"}</span><h2 id="newsletter-test-title">{lang === "pt" ? "Enviar newsletter" : "Send newsletter"}</h2></div></div>
+        <button type="button" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={20} /></button>
+      </header>
+      <div className="newsletter-test-notice"><BadgeCheck size={18} /><p><strong>{lang === "pt" ? "Só subscritores confirmados" : "Confirmed subscribers only"}</strong><span>{lang === "pt" ? "Cada mensagem inclui uma ligação para cancelar a subscrição." : "Every message includes a link to unsubscribe."}</span></p></div>
+      <section className="newsletter-demo-subscribers"><div><strong>{lang === "pt" ? "Audiência confirmada" : "Confirmed audience"}</strong><span>{activeCount === null ? "…" : `${activeCount} ${lang === "pt" ? "subscritor(es)" : "subscriber(s)"}`}</span></div>{audienceError && <p>{audienceError}</p>}{activeCount === 0 && <p>{lang === "pt" ? "Ainda não há inscrições confirmadas." : "No confirmed subscriptions yet."}</p>}</section>
+      <div className="newsletter-test-layout">
+        <section className="newsletter-test-fields">
+          <label className="field"><span>{lang === "pt" ? "Assunto" : "Subject"}</span><input value={subject} onChange={(event) => { setSubject(event.target.value); setStatus(""); }} maxLength={140} placeholder={lang === "pt" ? "Uma novidade especial chegou à Mystic" : "Something special has arrived at Mystic"} required /><small>{subject.length}/140</small></label>
+          <label className="field"><span>{lang === "pt" ? "Mensagem" : "Message"}</span><textarea value={message} onChange={(event) => { setMessage(event.target.value); setStatus(""); }} maxLength={5000} rows={9} placeholder={lang === "pt" ? "Escreva a mensagem tal como quer que apareça no email. Separe os parágrafos com uma linha vazia." : "Write the message as it should appear in the email. Separate paragraphs with a blank line."} required /><small>{message.length}/5000</small></label>
+          <label className="newsletter-test-image-input">
+            <Camera size={22} /><span><strong>{lang === "pt" ? "Adicionar imagens" : "Add images"}</strong><small>{lang === "pt" ? `Até ${MAX_NEWSLETTER_CAMPAIGN_IMAGES} imagens · JPG, PNG ou WebP · 5 MB cada` : `Up to ${MAX_NEWSLETTER_CAMPAIGN_IMAGES} images · JPG, PNG or WebP · 5 MB each`}</small></span>
+            <input type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={images.length >= MAX_NEWSLETTER_CAMPAIGN_IMAGES} onChange={(event) => { void addImages(Array.from(event.target.files ?? [])).catch((uploadError) => setError(uploadError instanceof Error ? uploadError.message : (lang === "pt" ? "Não foi possível carregar uma das imagens." : "One image could not be uploaded."))); event.target.value = ""; }} />
+          </label>
+          <div className="newsletter-image-url"><input type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://..." aria-label={lang === "pt" ? "Endereço HTTPS da imagem" : "HTTPS image URL"} /><button type="button" className="ghost-button" onClick={addImageUrl} disabled={images.length >= MAX_NEWSLETTER_CAMPAIGN_IMAGES}>{lang === "pt" ? "Adicionar imagem por URL" : "Add image URL"}</button></div>
+          {images.length > 0 && <div className="newsletter-test-images">{images.map((image) => <article key={image.id}><img src={image.dataUrl} alt="" /><span title={image.name}>{image.name}</span><button type="button" onClick={() => { setImages((current) => current.filter((item) => item.id !== image.id)); setStatus(""); }} aria-label={lang === "pt" ? `Remover ${image.name}` : `Remove ${image.name}`}><Trash2 size={16} /></button></article>)}</div>}
+        </section>
+        <section className="newsletter-test-preview" aria-label={lang === "pt" ? "Pré-visualização do email" : "Email preview"}>
+          <div><span>{lang === "pt" ? "Pré-visualização do email" : "Email preview"}</span><small>{lang === "pt" ? "Computador e telemóvel" : "Desktop and mobile"}</small></div>
+          <iframe title={lang === "pt" ? "Pré-visualização da newsletter" : "Newsletter preview"} srcDoc={previewHtml} sandbox="" />
+        </section>
+      </div>
+      {error && <p className="auth-error newsletter-test-feedback" role="alert">{error}</p>}
+      {status && <p className="newsletter-test-success" role="status">{status}</p>}
+      <footer><button className="admin-cancel" type="button" onClick={onClose} disabled={sending}>{lang === "pt" ? "Cancelar" : "Cancel"}</button><button className="primary-button" type="submit" disabled={sending || activeCount === null || activeCount === 0}><Mail size={17} />{sending ? (lang === "pt" ? "A enviar…" : "Sending…") : (lang === "pt" ? "Enviar newsletter" : "Send newsletter")}</button></footer>
+    </form>
+  </>;
 }
 
 function RevokeSessionsButton({ lang, disabled = false }: { lang: Lang; disabled?: boolean }) {

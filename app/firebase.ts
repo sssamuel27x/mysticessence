@@ -3,8 +3,10 @@ import {
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
   getAuth,
+  connectAuthEmulator,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signInWithPopup,
   signOut,
   sendPasswordResetEmail,
@@ -17,6 +19,7 @@ import {
   deleteDoc,
   doc,
   getFirestore,
+  initializeFirestore,
   limit,
   runTransaction,
   writeBatch,
@@ -27,9 +30,9 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { connectFunctionsEmulator, getFunctions, httpsCallable } from "firebase/functions";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
-import { getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
+import { connectStorageEmulator, getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
 import { validateProductImageFiles } from "./product-gallery";
 import { normalizeHomeHeroImages, validateHomeHeroImageFiles, type HomeHeroImage } from "./home-hero";
 import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
@@ -80,9 +83,19 @@ if (app && typeof window !== "undefined" && env("RECAPTCHA_ENTERPRISE_SITE_KEY")
   initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(env("RECAPTCHA_ENTERPRISE_SITE_KEY")!), isTokenAutoRefreshEnabled: true });
 }
 export const auth = app ? getAuth(app) : null;
-export const database = app ? getFirestore(app) : null;
+export const database = app
+  ? (import.meta.env.DEV ? initializeFirestore(app, { host: "127.0.0.1:8080", ssl: false }) : getFirestore(app))
+  : null;
 export const storage = app ? getStorage(app) : null;
 export const functions = app ? getFunctions(app, env("FIREBASE_FUNCTIONS_REGION") ?? "europe-west1") : null;
+
+// In local development, route every Firebase operation to the local emulators.
+// This keeps localhost testing away from customer accounts and production data.
+if (import.meta.env.DEV && app && auth && database && functions) {
+  connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+  connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+  if (storage) connectStorageEmulator(storage, "127.0.0.1", 9199);
+}
 
 export type FirebaseSession = {
   uid: string;
@@ -106,7 +119,7 @@ async function sessionFromUser(user: User): Promise<FirebaseSession> {
     email: user.email || "",
     emailVerified: user.emailVerified,
     authTime: Number(token.claims.auth_time || 0),
-    role: token.claims.admin === true || user.uid === adminUid ? "admin" : "customer",
+    role: token.claims.admin === true || user.uid === adminUid || (import.meta.env.DEV && user.email === "newsletter-admin@mystic.test") ? "admin" : "customer",
   };
 }
 
@@ -135,6 +148,13 @@ export function watchSession(
     }
     let baseSession: FirebaseSession;
     try {
+      if (import.meta.env.DEV && user.email === "newsletter-admin@mystic.test" && functions) {
+        // The local UI recognizes this test-only email, but Firestore security
+        // rules rely on the admin claim inside the ID token. Ask the emulator
+        // to grant that claim before opening admin-only listeners.
+        await httpsCallable(functions, "ensureLocalNewsletterAdmin")({});
+        await user.getIdToken(true);
+      }
       baseSession = await sessionFromUser(user);
     } catch {
       // Never retain the previous account when token verification fails.
@@ -185,6 +205,13 @@ export async function loginWithEmail(email: string, password: string) {
   const result = await signInWithEmailAndPassword(auth, email, password);
   await ensureProfile(result.user);
   return sessionFromUser(result.user);
+}
+
+export async function loginAsLocalNewsletterAdmin() {
+  if (!import.meta.env.DEV || !auth || !functions) throw new Error("Acesso local indisponível.");
+  const response = await httpsCallable<undefined, { customToken: string }>(functions, "createLocalNewsletterAdminSession")(undefined);
+  const result = await signInWithCustomToken(auth, response.data.customToken);
+  await ensureProfile(result.user);
 }
 
 export async function registerWithEmail(name: string, email: string, password: string) {
@@ -493,6 +520,17 @@ export async function uploadHomeHeroImage(file: File): Promise<HomeHeroImage> {
   return { id, imageUrl: await getDownloadURL(imageRef), imagePath: imageRef.fullPath };
 }
 
+export async function uploadNewsletterCampaignImage(file: File) {
+  if (!storage || !storageEnabled) throw new Error("O envio de imagens não está disponível neste momento.");
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size <= 0 || file.size > 5 * 1024 * 1024) {
+    throw new Error("Escolha uma imagem JPG, PNG ou WebP com menos de 5 MB.");
+  }
+  const extension = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const imageRef = ref(storage, `newsletter-campaigns/${crypto.randomUUID()}.${extension}`);
+  await uploadBytes(imageRef, file, { contentType: file.type });
+  return { imageUrl: await getDownloadURL(imageRef), imagePath: imageRef.fullPath };
+}
+
 export async function saveHomeHeroImages(images: HomeHeroImage[]) {
   if (!database) throw new Error("Firebase não está configurado.");
   const normalized = normalizeHomeHeroImages(images);
@@ -606,6 +644,36 @@ export async function validateCoupon(code: string) {
   if (!functions) throw new Error("O Firebase ainda não está configurado.");
   const callable = httpsCallable<{ code: string }, { code: string; discount: number }>(functions, "validateCoupon");
   return (await callable({ code })).data;
+}
+
+export async function subscribeToNewsletter(payload: { email: string; consent: boolean }) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<typeof payload, { status: "pending" | "active"; alreadySubscribed?: boolean; emailQueued?: boolean; localConfirmationUrl?: string }>(functions, "subscribeNewsletter");
+  return (await callable(payload)).data;
+}
+
+export async function confirmNewsletterSubscription(token: string) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<{ token: string }, { status: "active"; couponCode: string; welcomeEmailQueued?: boolean; localOnly?: boolean }>(functions, "confirmNewsletterSubscription");
+  return (await callable({ token })).data;
+}
+
+export async function unsubscribeFromNewsletter(token: string) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<{ token: string }, { status: "unsubscribed" }>(functions, "unsubscribeNewsletter");
+  return (await callable({ token })).data;
+}
+
+export async function sendNewsletterCampaign(payload: { subject: string; message: string; images?: { url: string; alt?: string }[] }) {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<typeof payload, { queued: number; localOnly?: boolean }>(functions, "sendNewsletterCampaign");
+  return (await callable(payload)).data;
+}
+
+export async function getNewsletterAudience() {
+  if (!functions) throw new Error("O Firebase ainda não está configurado.");
+  const callable = httpsCallable<void, { activeCount: number }>(functions, "getNewsletterAudience");
+  return (await callable()).data;
 }
 
 export function watchReviews<T>(productId: string, callback: (reviews: T[]) => void) {
