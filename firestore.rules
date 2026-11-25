@@ -233,6 +233,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /newsletterSubscriptions/{subscriptionId} {
+      // Subscrições, tokens e consentimentos só são tratados pelas Cloud Functions.
+      allow read, write: if false;
+    }
+
     match /influencerCouponUses/{useId} {
       allow read: if isAdmin() || (signedIn() && resource.data.influencerUid == request.auth.uid);
       // Commission entries are created only after a verified payment callback.

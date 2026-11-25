@@ -25,6 +25,13 @@ service firebase.storage {
         && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
     }
 
+    match /newsletter-campaigns/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
