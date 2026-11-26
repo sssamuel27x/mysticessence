@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   ALL_STORE_PROMOTION,
   applyBrandPromotion,
+  applyIndividualPromotion,
   brandPromotionChanges,
   brandPromotionSummaries,
   clearCampaignPricing,
@@ -67,6 +68,28 @@ test("a whole-store promotion and a stronger brand promotion can run together", 
   assert.equal(withoutBrand[0].discount, 10);
   assert.equal(withoutBrand[0].brandPromotion, null);
   assert.equal(withoutBrand[0].storePromotion.discount, 10);
+});
+
+test("an individual product promotion overrides a lower brand promotion and is saved independently", () => {
+  const brandSale = applyBrandPromotion(catalogue, "Rayhaan", 20, "2027-04-01T00:00:00.000Z");
+  const itemSale = applyIndividualPromotion(brandSale[0], 25, "2027-03-01T00:00:00.000Z");
+  assert.equal(itemSale.discount, 25);
+  assert.equal(itemSale.brandPromotion.discount, 20);
+  assert.equal(itemSale.individualPromotion.discount, 25);
+  assert.equal(effectiveCampaignDiscount(itemSale, new Date("2027-02-01T00:00:00.000Z").getTime()), 25);
+  assert.equal(effectiveCampaignDiscount(itemSale, new Date("2027-03-02T00:00:00.000Z").getTime()), 20);
+  const restored = removeBrandPromotion([itemSale], "Rayhaan")[0];
+  assert.equal(restored.discount, 25);
+  assert.equal(restored.individualPromotion.discount, 25);
+});
+
+test("an individual product discount can be created under the whole-store promotion", () => {
+  const storeSale = applyBrandPromotion(catalogue, ALL_STORE_PROMOTION, 20, "2027-04-01T00:00:00.000Z");
+  const itemSale = applyIndividualPromotion(storeSale[0], 25, "2027-03-01T00:00:00.000Z");
+  assert.equal(itemSale.discount, 25);
+  assert.equal(itemSale.storePromotion.discount, 20);
+  assert.equal(effectiveCampaignDiscount(itemSale, new Date("2027-02-01T00:00:00.000Z").getTime()), 25);
+  assert.equal(effectiveCampaignDiscount(itemSale, new Date("2027-03-02T00:00:00.000Z").getTime()), 20);
 });
 
 test("ending a whole-store promotion keeps an active brand promotion", () => {

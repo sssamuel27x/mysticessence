@@ -285,7 +285,7 @@ export async function saveProductGroup<T extends { id: string }>(product: T, dec
     const reference = doc(database!, "products", product.id);
     const snapshot = await transaction.get(reference);
     const current = snapshot.exists() ? { ...snapshot.data(), id: snapshot.id } : null;
-    const revision = (value: object | null) => value && Object.fromEntries(["variants", "name", "price", "brand", "category", "audiences", "desc", "discount", "promotionEndsAt", "storePromotion", "brandPromotion", "updatedAt"].map(key => [key, (value as Record<string, unknown>)[key] ?? null]));
+    const revision = (value: object | null) => value && Object.fromEntries(["variants", "name", "price", "brand", "category", "audiences", "desc", "discount", "promotionEndsAt", "individualPromotion", "storePromotion", "brandPromotion", "updatedAt"].map(key => [key, (value as Record<string, unknown>)[key] ?? null]));
     if (comparable(revision(current)) !== comparable(revision(expected))) {
       throw new Error("O produto ou stock mudou entretanto. Reabra o editor antes de guardar.");
     }

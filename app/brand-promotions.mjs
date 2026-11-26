@@ -31,11 +31,35 @@ function specificBrandPromotionFor(product) {
   return product.brandPromotion;
 }
 
+function individualPromotionFor(product) {
+  const promotion = product.individualPromotion;
+  if (!promotion || !Number.isFinite(Number(promotion.discount)) || typeof promotion.endsAt !== "string") return null;
+  return promotion;
+}
+
+export function individualPromotionDetails(product) {
+  const explicit = individualPromotionFor(product);
+  if (explicit) return explicit;
+  const storePromotion = storePromotionFor(product);
+  const brandPromotion = specificBrandPromotionFor(product);
+  if (storePromotion || brandPromotion) {
+    const legacyBaseline = (brandPromotion || storePromotion).previousDiscount;
+    const legacyEnd = (brandPromotion || storePromotion).previousEndsAt;
+    return Number(legacyBaseline) > 0 && typeof legacyEnd === "string"
+      ? { discount: Number(legacyBaseline), endsAt: legacyEnd }
+      : null;
+  }
+  return Number(product.discount) > 0
+    ? { discount: Number(product.discount), endsAt: product.promotionEndsAt ?? "" }
+    : null;
+}
+
 function baselineFor(product, storePromotion, brandPromotion) {
   const campaign = brandPromotion || storePromotion;
+  const individualPromotion = individualPromotionFor(product);
   return {
-    discount: campaign ? campaign.previousDiscount ?? null : product.discount ?? null,
-    endsAt: campaign ? campaign.previousEndsAt ?? null : product.promotionEndsAt ?? null,
+    discount: individualPromotion?.discount ?? (campaign ? campaign.previousDiscount ?? null : product.discount ?? null),
+    endsAt: individualPromotion?.endsAt ?? (campaign ? campaign.previousEndsAt ?? null : product.promotionEndsAt ?? null),
   };
 }
 
@@ -52,11 +76,11 @@ function campaignFor(brand, discount, endsAt, appliedAt, baseline) {
 
 function effectivePromotion(baseline, storePromotion, brandPromotion) {
   const candidates = [
-    brandPromotion && { discount: Number(brandPromotion.discount), endsAt: brandPromotion.endsAt },
-    storePromotion && { discount: Number(storePromotion.discount), endsAt: storePromotion.endsAt },
     Number.isFinite(Number(baseline.discount)) && Number(baseline.discount) > 0
       ? { discount: Number(baseline.discount), endsAt: baseline.endsAt }
       : null,
+    brandPromotion && { discount: Number(brandPromotion.discount), endsAt: brandPromotion.endsAt },
+    storePromotion && { discount: Number(storePromotion.discount), endsAt: storePromotion.endsAt },
   ].filter(Boolean);
   return candidates.reduce((best, candidate) => !best || candidate.discount > best.discount ? candidate : best, null);
 }
@@ -75,8 +99,9 @@ function withCampaigns(product, baseline, storePromotion, brandPromotion) {
 export function effectiveCampaignDiscount(product, now = Date.now()) {
   const storePromotion = storePromotionFor(product);
   const brandPromotion = specificBrandPromotionFor(product);
-  if (!storePromotion && !brandPromotion) return null;
-  const baseline = baselineFor(product, storePromotion, brandPromotion);
+  const individualPromotion = individualPromotionFor(product);
+  if (!storePromotion && !brandPromotion && !individualPromotion) return null;
+  const baseline = individualPromotion ?? baselineFor(product, storePromotion, brandPromotion);
   const activeDiscount = (discount, endsAt) => {
     const numericDiscount = Number(discount);
     if (!Number.isFinite(numericDiscount) || numericDiscount <= 0) return 0;
@@ -90,6 +115,31 @@ export function effectiveCampaignDiscount(product, now = Date.now()) {
   );
 }
 
+export function applyIndividualPromotion(product, discount, endsAt) {
+  const storePromotion = storePromotionFor(product);
+  const brandPromotion = specificBrandPromotionFor(product);
+  const hasCampaign = Boolean(storePromotion || brandPromotion);
+  const individualPromotion = Number(discount) > 0 && endsAt
+    ? { discount: Math.min(95, Math.max(1, Math.trunc(Number(discount)))), endsAt }
+    : null;
+  if (!hasCampaign) {
+    return {
+      ...product,
+      discount: individualPromotion?.discount ?? null,
+      promotionEndsAt: individualPromotion?.endsAt ?? null,
+      individualPromotion,
+    };
+  }
+  const nextProduct = { ...product, individualPromotion };
+  const baseline = individualPromotion
+    ? { discount: individualPromotion.discount, endsAt: individualPromotion.endsAt }
+    : { discount: null, endsAt: null };
+  const updateBaseline = (campaign) => campaign
+    ? { ...campaign, previousDiscount: baseline.discount, previousEndsAt: baseline.endsAt }
+    : null;
+  return withCampaigns(nextProduct, baseline, updateBaseline(storePromotion), updateBaseline(brandPromotion));
+}
+
 export function clearCampaignPricing(product) {
   return {
     ...product,
@@ -97,6 +147,7 @@ export function clearCampaignPricing(product) {
     promotionEndsAt: undefined,
     storePromotion: undefined,
     brandPromotion: undefined,
+    individualPromotion: undefined,
   };
 }
 
@@ -173,11 +224,13 @@ export function brandPromotionChanges(before, after) {
       oldProduct.promotionEndsAt ?? null,
       oldProduct.storePromotion ?? null,
       oldProduct.brandPromotion ?? null,
+      oldProduct.individualPromotion ?? null,
     ]) !== JSON.stringify([
       product.discount ?? null,
       product.promotionEndsAt ?? null,
       product.storePromotion ?? null,
       product.brandPromotion ?? null,
+      product.individualPromotion ?? null,
     ]);
   });
 }

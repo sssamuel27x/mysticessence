@@ -16,7 +16,7 @@ import { formatPostalCodeInput } from "./postal-code.mjs";
 import { applyDecantAvailability, isDecantBlocked } from "../functions/decant-availability.mjs";
 import { BrandsProvider, BrandSettingsDialog, useBrands } from "./brand-settings";
 import { brandKey, productsForBrand } from "./brand-catalogue";
-import { ALL_STORE_PROMOTION, applyBrandPromotion, brandPromotionChanges, brandPromotionSummaries, clearCampaignPricing, effectiveCampaignDiscount, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
+import { ALL_STORE_PROMOTION, applyBrandPromotion, applyIndividualPromotion, brandPromotionChanges, brandPromotionSummaries, clearCampaignPricing, effectiveCampaignDiscount, individualPromotionDetails, isAllStorePromotion, removeBrandPromotion } from "./brand-promotions.mjs";
 import { buildNewsletterCampaignHtml, MAX_NEWSLETTER_CAMPAIGN_IMAGES, validateNewsletterCampaignImages, type NewsletterCampaignImage } from "./newsletter-email";
 import { SHIPPING_ZONE_IDS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, getShippingCost, type ShippingZone } from "../functions/shipping.mjs";
 import { DEFAULT_DECANT_PRICING, applyDecantPricing, decantPriceFor, isValidDecantPricing, type DecantPricingRule, type DecantSize } from "../functions/decant-pricing.mjs";
@@ -167,6 +167,7 @@ type Product = {
   price: number;
   discount?: number;
   promotionEndsAt?: string;
+  individualPromotion?: { discount: number; endsAt: string } | null;
   storePromotion?: {
     brand: string;
     discount: number;
@@ -4028,10 +4029,10 @@ function AdminPage({
     setProductSaveError("");
     setCategoryError("");
     editBaseline.current = product;
-    const discount = productDiscount(product);
     const endsAt = productPromotionEnd(product);
     setEditingId(product.id);
-    setDraft({ name: product.name[lang], brand: product.brand, descriptionPt: product.desc?.pt ?? "", descriptionEn: product.desc?.en ?? "", price: String(product.price), volume: product.volume, category: product.category, audiences: getProductAudiences(product), scentProfile: product.scentProfile, tag: product.tag === "new" ? "stock" : product.tag, isNew: product.isNew ?? product.tag === "new", bestSeller: Boolean(product.bestSeller), promotion: discount > 0, discount: discount ? String(discount) : "", endsAt: toDateTimeInput(endsAt) });
+    const individualPromotion = individualPromotionDetails(product);
+    setDraft({ name: product.name[lang], brand: product.brand, descriptionPt: product.desc?.pt ?? "", descriptionEn: product.desc?.en ?? "", price: String(product.price), volume: product.volume, category: product.category, audiences: getProductAudiences(product), scentProfile: product.scentProfile, tag: product.tag === "new" ? "stock" : product.tag, isNew: product.isNew ?? product.tag === "new", bestSeller: Boolean(product.bestSeller), promotion: Boolean(individualPromotion), discount: individualPromotion ? String(individualPromotion.discount) : "", endsAt: toDateTimeInput(individualPromotion?.endsAt || endsAt) });
     const editableVariants = product.variants.length ? product.variants : [{ volume: product.volume, price: product.price, soldout: product.tag === "soldout" }];
     setDraftVariants(editableVariants.map((variant) => ({ id: crypto.randomUUID(), volume: variant.volume, price: String(variant.price), isDecant: Boolean(variant.isDecant), stock: typeof variant.stock === "number" ? String(variant.stock) : "", soldout: Boolean(variant.soldout) })));
     clearImageDraft();
@@ -4096,7 +4097,7 @@ function AdminPage({
       }
       setUploadProgress("");
       const imageData = productImageFields(images);
-      const nextProduct: Product = {
+      const nextProductBase: Product = {
         ...fallback,
         id: nextId,
         brand: brands.find((brand) => brandKey(brand) === brandKey(draft.brand)) ?? draft.brand.trim(),
@@ -4108,8 +4109,8 @@ function AdminPage({
         bestSeller: draft.bestSeller,
         name: { pt: draft.name.trim(), en: draft.name.trim() },
         price: basePrice,
-        discount: draft.promotion ? Math.min(95, Math.max(1, Number(draft.discount))) : undefined,
-        promotionEndsAt: draft.promotion ? new Date(draft.endsAt).toISOString() : undefined,
+        discount: fallback.discount,
+        promotionEndsAt: fallback.promotionEndsAt,
         volume: baseVolume,
         variants: updatedVariants,
         family: existing?.family ?? { pt: "", en: "" },
@@ -4127,6 +4128,11 @@ function AdminPage({
         mood: existing?.mood ?? "custom",
         ...imageData,
       };
+      const nextProduct = applyIndividualPromotion(
+        nextProductBase,
+        draft.promotion ? Number(draft.discount) : 0,
+        draft.promotion ? new Date(draft.endsAt).toISOString() : "",
+      ) as Product;
       const nextDecantProduct = asDecantProduct(nextProduct);
 
       if (firebaseEnabled) {

@@ -9,6 +9,7 @@ const { trackingDetails } = require("./tracking.cjs");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const { HttpsError, onCall: firebaseOnCall, onRequest } = require("firebase-functions/v2/https");
 const { normalizeBlockedDecantSizes, variantUnavailable } = require("./decant-availability.mjs");
+const { liveProductDiscount } = require("./product-discounts.mjs");
 const { decantStockUsage, normalizeDecantStock, reserveDecantStock, restoreDecantStock } = require("./decant-stock.mjs");
 
 initializeApp();
@@ -279,10 +280,7 @@ async function queueEmail(to, subject, htmlBody, id) {
 }
 
 function liveDiscount(product) {
-  const discount = Number(product.discount || 0);
-  if (!discount) return 0;
-  if (product.promotionEndsAt && Date.parse(product.promotionEndsAt) <= Date.now()) return 0;
-  return Math.min(95, Math.max(0, discount));
+  return liveProductDiscount(product);
 }
 
 function couponPercentage(coupon) {
