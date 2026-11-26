@@ -560,7 +560,7 @@ const COPY = {
         spain: "Espanha",
       },
       shippingZoneNotes: {
-        continental: "4,90 € ou grátis acima de 85 €",
+        continental: "4,90 € ou grátis acima de 60 €",
         islands: "12 € ou grátis acima de 100 €",
         spain: "10 € ou grátis acima de 100 €",
       },
@@ -1329,7 +1329,7 @@ function Storefront() {
       const unsubscribeToken = url.searchParams.get("newsletterUnsubscribe");
       if (confirmationToken) {
         void confirmNewsletterSubscription(confirmationToken).then(result => setNewsletterPopupResult(
-          `Inscrição confirmada. O email de agradecimento foi entregue ao serviço de envio da loja. Use ${result.couponCode} para receber 10% de desconto.`
+          "Inscrição confirmada. O email de agradecimento foi entregue ao serviço de envio da loja."
         )).catch(() => setNewsletterPopupResult("A ligação expirou ou já foi utilizada. Faça uma nova inscrição para receber outro email de confirmação." )).finally(() => { url.searchParams.delete("newsletterConfirm"); window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`); setNewsletterPopupOpen(true); });
         return;
       }
@@ -1894,8 +1894,8 @@ function Header({
     onSearch(term);
   };
   const announcement = lang === "pt"
-    ? `Envios grátis para Portugal Continental a partir de ${price(settings.continental.freeFrom, lang)}`
-    : `Free shipping to mainland Portugal from ${price(settings.continental.freeFrom, lang)}`;
+    ? `BLACK FRIDAY · PORTES GRÁTIS A PARTIR DE ${price(settings.continental.freeFrom, lang)}`
+    : `BLACK FRIDAY · FREE SHIPPING FROM ${price(settings.continental.freeFrom, lang)}`;
   return (
     <header className="header">
       <div className="announcement" aria-label={lang === "pt" ? "Informações da loja" : "Store information"}>
@@ -4777,11 +4777,11 @@ function NewsletterWelcomeDialog({ lang, result, onClose }: { lang: Lang; result
     setBusy(true);
     try {
       const response = await subscribeToNewsletter({ email: email.trim().toLowerCase(), consent: true });
-      if (response.status === "active") { setConfirmed(true); setSubscribed(true); setMessage("Já está inscrito. Use MYSTICNEWS10 para receber 10% de desconto."); }
+      if (response.status === "active") { setConfirmed(true); setSubscribed(true); setMessage(lang === "pt" ? "Este email já está inscrito na newsletter." : "This email is already subscribed to the newsletter."); }
       else {
         setSubscribed(true);
         setMessage(response.emailQueued
-          ? "Enviámos um email de confirmação para o endereço indicado. Confirme a inscrição para receber o código MYSTICNEWS10."
+          ? (lang === "pt" ? "Enviámos um email de confirmação para o endereço indicado. Confirme a inscrição para receber novidades e campanhas." : "We sent a confirmation email. Confirm your subscription to receive news and offers.")
           : "Não foi possível enviar o email de confirmação. Tente novamente dentro de instantes.");
         setLocalConfirmationUrl(response.localConfirmationUrl || "");
       }
@@ -4793,16 +4793,15 @@ function NewsletterWelcomeDialog({ lang, result, onClose }: { lang: Lang; result
     <section className="newsletter-welcome" role="dialog" aria-modal="true" aria-labelledby="newsletter-welcome-title">
       <button className="newsletter-welcome-close" onClick={onClose} aria-label={lang === "pt" ? "Fechar" : "Close"}><X size={18} /></button>
       <span className="eyebrow">MYSTIC ESSENCE · NEWSLETTER</span>
-      <h2 id="newsletter-welcome-title">{completed ? (lang === "pt" ? (confirmed || result.includes("confirmada") ? "Inscrição confirmada" : "Só falta confirmar") : (confirmed ? "Subscription confirmed" : "One last step")) : (lang === "pt" ? "Um presente para a tua próxima essência" : "A gift for your next signature scent")}</h2>
-      <p>{result || message || (lang === "pt" ? "Recebe novidades e 10% de desconto na tua próxima compra." : "Get our news and 10% off your next order.")}</p>
+      <h2 id="newsletter-welcome-title">{completed ? (lang === "pt" ? (confirmed || result.includes("confirmada") ? "Inscrição confirmada" : "Só falta confirmar") : (confirmed ? "Subscription confirmed" : "One last step")) : (lang === "pt" ? "Novidades da Mystic Essence" : "Mystic Essence updates")}</h2>
+      <p>{result || message || (lang === "pt" ? "Recebe novidades, lançamentos e campanhas da Mystic Essence por email." : "Get Mystic Essence news, launches and campaigns by email.")}</p>
       {!completed ? <form onSubmit={subscribe}>
         <label className="field"><span>Email</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="o-teu@email.pt" required /></label>
         <label className="newsletter-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>{lang === "pt" ? "Aceito receber novidades e campanhas da Mystic Essence por email. Posso cancelar a qualquer momento." : "I agree to receive Mystic Essence news and offers by email. I can unsubscribe at any time."}</span></label>
         {message && <p className="newsletter-welcome-error" role="alert">{message}</p>}
-        <button className="primary-button" type="submit" disabled={busy}>{busy ? "Aguarde…" : (lang === "pt" ? "Inscrever-me e receber 10%" : "Subscribe and get 10% off")}</button>
+        <button className="primary-button" type="submit" disabled={busy}>{busy ? "Aguarde…" : (lang === "pt" ? "Inscrever-me" : "Subscribe")}</button>
       </form> : <>
         {localConfirmationUrl && <a className="primary-button newsletter-local-confirm" href={localConfirmationUrl}>Confirmar inscrição</a>}
-        {(confirmed || result.includes("confirmada")) && <div className="newsletter-coupon-code"><span>{lang === "pt" ? "O TEU CÓDIGO" : "YOUR CODE"}</span><strong>MYSTICNEWS10</strong><small>{lang === "pt" ? "10% de desconto" : "10% off"}</small></div>}
       </>}
       {!success && <small className="newsletter-welcome-footnote">{lang === "pt" ? "Ao fechar, esta janela fica escondida neste dispositivo durante 30 dias." : "Closing this window hides it on this device for 30 days."}</small>}
       {success && <button className="ghost-button newsletter-welcome-done" onClick={onClose}>{lang === "pt" ? "Continuar a explorar" : "Continue browsing"}</button>}
@@ -5868,7 +5867,7 @@ function Footer({ t, lang, onLegal, onCookies }: { t: (typeof COPY)[Lang]; lang:
       if (response.status === "active") {
         setNewsletterMessage(lang === "pt" ? "Este email já está inscrito na newsletter." : "This email is already subscribed to the newsletter.");
       } else if (response.emailQueued) {
-        setNewsletterMessage(lang === "pt" ? "Enviámos um email de confirmação. Confirme a inscrição para receber o seu desconto de 10%." : "We sent a confirmation email. Confirm your subscription to receive your 10% discount.");
+        setNewsletterMessage(lang === "pt" ? "Enviámos um email de confirmação. Confirme a inscrição para receber novidades e campanhas." : "We sent a confirmation email. Confirm your subscription to receive news and offers.");
         setNewsletterEmail("");
         setNewsletterConsent(false);
       } else {
@@ -5904,7 +5903,7 @@ function Footer({ t, lang, onLegal, onCookies }: { t: (typeof COPY)[Lang]; lang:
         <section className="footer-newsletter" aria-labelledby="footer-newsletter-title">
           <div className="footer-newsletter-copy">
             <span>{lang === "pt" ? "MYSTIC ESSENCE · NEWSLETTER" : "MYSTIC ESSENCE · NEWSLETTER"}</span>
-            <h3 id="footer-newsletter-title">{lang === "pt" ? "Recebe novidades e 10% de desconto" : "Get our news and 10% off"}</h3>
+            <h3 id="footer-newsletter-title">{lang === "pt" ? "Recebe novidades da Mystic Essence" : "Get Mystic Essence news"}</h3>
             <p>{lang === "pt" ? "Inscreve-te para receber novidades e campanhas. A inscrição só fica ativa depois de confirmares o email." : "Sign up for news and offers. Your subscription becomes active after you confirm your email."}</p>
           </div>
           <form className="footer-newsletter-form" onSubmit={subscribeFromFooter}>

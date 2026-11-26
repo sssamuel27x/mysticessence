@@ -73,7 +73,7 @@ export const LEGAL_DOCUMENTS: Record<LegalKind, LegalDocument> = {
           "Os preços podem ser alterados sem afetar encomendas já confirmadas, exceto em caso de erro manifesto. Códigos e promoções obedecem às condições e prazos apresentados e, salvo indicação em contrário, não são acumuláveis nem convertíveis em dinheiro.",
           "Nas compras realizadas com sessão iniciada, cada euro completo efetivamente pago por produtos, depois de descontos e sem incluir portes, atribui um ponto após a confirmação do pagamento. Os pontos não têm valor monetário, não expiram enquanto o programa se mantiver nestas condições e podem ser utilizados nas recompensas apresentadas na conta do cliente.",
           "Cada compra permite utilizar uma recompensa de pontos juntamente com um código promocional. Só pode ser utilizada uma recompensa de pontos por compra e o total dos descontos nunca pode ultrapassar o valor dos produtos. A recompensa de 750 pontos, quando utilizada numa compra seguinte, inclui 5% de desconto nos produtos e um perfume surpresa escolhido pela Mystic Essence. Em caso de cancelamento de um pagamento pendente, os pontos reservados são devolvidos; devoluções ou reembolsos podem originar o acerto dos pontos atribuídos nessa compra.",
-          "Os portes e o limiar de envio gratuito aplicáveis são os apresentados no checkout. Atualmente, o envio normal para Portugal Continental é gratuito em compras de valor igual ou superior a 85 €.",
+          "Os portes e o limiar de envio gratuito aplicáveis são os apresentados no checkout. Durante a campanha Black Friday, o envio normal para Portugal Continental é gratuito em compras de valor igual ou superior a 60 €.",
         ],
       },
       {

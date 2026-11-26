@@ -3,11 +3,13 @@ export type ShippingCarrier = { id: string; name: string; price: number; descrip
 export type ShippingSettings = Record<ShippingZone, { freeFrom: number; carriers: ShippingCarrier[] }>;
 export const SHIPPING_ZONE_IDS: readonly ShippingZone[];
 export const MAX_CARRIERS: number;
+export const BLACK_FRIDAY_SHIPPING: Readonly<{ enabled: boolean; mainlandFreeFrom: number }>;
 export const DEFAULT_SHIPPING_SETTINGS: ShippingSettings;
 export const STORE_PICKUP_CARRIER_ID: 'store-pickup';
 export const STORE_PICKUP_CARRIER: Readonly<ShippingCarrier>;
 export function isValidShippingSettings(value: unknown): value is ShippingSettings;
 export function normalizeShippingSettings(value: unknown): ShippingSettings | null;
+export function applyBlackFridayShipping(settings: ShippingSettings | null): ShippingSettings | null;
 export function getShippingCarrier(zone: ShippingZone, settings?: ShippingSettings, carrierId?: string): ShippingCarrier | null;
 export function getShippingCost(subtotal: number, zone: ShippingZone, settings?: ShippingSettings, carrierId?: string): number;
 export function shippingSettingsEqual(first: ShippingSettings, second: ShippingSettings): boolean;

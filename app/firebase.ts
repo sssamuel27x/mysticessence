@@ -35,7 +35,7 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-ch
 import { connectStorageEmulator, getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
 import { validateProductImageFiles } from "./product-gallery";
 import { normalizeHomeHeroImages, validateHomeHeroImageFiles, type HomeHeroImage } from "./home-hero";
-import { DEFAULT_SHIPPING_SETTINGS, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
+import { DEFAULT_SHIPPING_SETTINGS, applyBlackFridayShipping, isValidShippingSettings, normalizeShippingSettings, type ShippingSettings } from "../functions/shipping.mjs";
 import { brandKey } from "./brand-catalogue";
 import { DEFAULT_DECANT_PRICING, isValidDecantPricing, normalizeDecantPricing, type DecantPricingRule } from "../functions/decant-pricing.mjs";
 import { normalizeBlockedDecantSizes } from "../functions/decant-availability.mjs";
@@ -325,7 +325,7 @@ export function watchShippingSettings(callback: (settings: ShippingSettings) => 
     return () => undefined;
   }
   return onSnapshot(doc(database, "settings", "shipping"), (snapshot) => {
-    const settings = snapshot.exists() ? normalizeShippingSettings(snapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS;
+    const settings = applyBlackFridayShipping(snapshot.exists() ? normalizeShippingSettings(snapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS);
     if (!isValidShippingSettings(settings)) {
       onError(new Error("Os portes guardados são inválidos."));
       return;
@@ -618,7 +618,9 @@ export function watchCoupons<T>(callback: (coupons: T[]) => void) {
   const ownerUid = auth?.currentUser?.uid;
   return onSnapshot(query(collection(database, "coupons"), orderBy("createdAt", "desc")), (snapshot) => {
     if (!ownerUid || auth?.currentUser?.uid !== ownerUid) return;
-    callback(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as T)));
+    callback(snapshot.docs
+      .filter((item) => item.data().source !== "newsletter-welcome" && item.data().active !== false)
+      .map((item) => ({ id: item.id, ...item.data() } as T)));
   }, () => { if (auth?.currentUser?.uid === ownerUid) { callback([]); syncFailed(); } });
 }
 
@@ -654,7 +656,7 @@ export async function subscribeToNewsletter(payload: { email: string; consent: b
 
 export async function confirmNewsletterSubscription(token: string) {
   if (!functions) throw new Error("O Firebase ainda não está configurado.");
-  const callable = httpsCallable<{ token: string }, { status: "active"; couponCode: string; welcomeEmailQueued?: boolean; localOnly?: boolean }>(functions, "confirmNewsletterSubscription");
+  const callable = httpsCallable<{ token: string }, { status: "active"; welcomeEmailQueued?: boolean; localOnly?: boolean }>(functions, "confirmNewsletterSubscription");
   return (await callable({ token })).data;
 }
 

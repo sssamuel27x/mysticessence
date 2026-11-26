@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Plus, Save, Trash2, Truck, X } from "lucide-react";
 import { firebaseEnabled, saveShippingSettings, watchShippingSettings } from "./firebase";
-import { DEFAULT_SHIPPING_SETTINGS, MAX_CARRIERS, SHIPPING_ZONE_IDS, isValidShippingSettings, normalizeShippingSettings, shippingSettingsEqual, type ShippingSettings, type ShippingZone } from "../functions/shipping.mjs";
+import { DEFAULT_SHIPPING_SETTINGS, MAX_CARRIERS, SHIPPING_ZONE_IDS, applyBlackFridayShipping, isValidShippingSettings, normalizeShippingSettings, shippingSettingsEqual, type ShippingSettings, type ShippingZone } from "../functions/shipping.mjs";
 
 const PREVIEW_KEY = "mystic-shipping-preview-v1";
 type ShippingContextValue = {
@@ -29,7 +29,7 @@ export function ShippingSettingsProvider({ children }: { children: ReactNode }) 
       const readPreview = () => {
         try {
           const stored = JSON.parse(localStorage.getItem(PREVIEW_KEY) || "null");
-          setSettings(normalizeShippingSettings(stored) ?? DEFAULT_SHIPPING_SETTINGS);
+          setSettings(applyBlackFridayShipping(normalizeShippingSettings(stored) ?? DEFAULT_SHIPPING_SETTINGS) ?? DEFAULT_SHIPPING_SETTINGS);
           setError("");
         } catch {
           setError("Não foi possível ler os portes guardados neste navegador.");
@@ -42,7 +42,7 @@ export function ShippingSettingsProvider({ children }: { children: ReactNode }) 
       return () => window.removeEventListener("storage", onStorage);
     }
     return watchShippingSettings((next) => {
-      setSettings(next);
+      setSettings(applyBlackFridayShipping(next) ?? DEFAULT_SHIPPING_SETTINGS);
       setReady(true);
       setError("");
     }, () => {

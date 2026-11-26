@@ -36,7 +36,8 @@ const ownerEmail = defineSecret("OWNER_EMAIL");
 const publicSiteUrl = defineString("PUBLIC_SITE_URL", { default: "https://mysticessence.pt" });
 const adminAccountUid = "bFGr8AtlSGQTDZ9Nel9BVXB0csC2";
 
-const newsletterCouponCode = "MYSTICNEWS10";
+// Newsletter offer paused during Black Friday; retain the settings for later.
+const newsletterWelcomeOffer = Object.freeze({ code: "MYSTICNEWS10", discount: 10, enabled: false });
 const newsletterTokenHash = token => createHash("sha256").update(text(token, 200)).digest("hex");
 const newsletterBaseUrl = () => process.env.FUNCTIONS_EMULATOR === "true"
   ? "http://localhost:3000"
@@ -48,11 +49,12 @@ function newsletterEmailHtml(title, paragraphs, extra = "") {
 }
 
 async function ensureNewsletterCoupon() {
-  const reference = db.collection("coupons").doc(newsletterCouponCode);
+  if (!newsletterWelcomeOffer.enabled) return;
+  const reference = db.collection("coupons").doc(newsletterWelcomeOffer.code);
   await db.runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
-    if (!snapshot.exists) transaction.create(reference, { code: newsletterCouponCode, discount: 10, createdAt: new Date().toISOString(), source: "newsletter-welcome" });
-    else if (Number(snapshot.data()?.discount) !== 10) throw new HttpsError("failed-precondition", "O código MYSTICNEWS10 já existe com outra configuração. Verifique-o no painel de cupões.");
+    if (!snapshot.exists) transaction.create(reference, { code: newsletterWelcomeOffer.code, discount: newsletterWelcomeOffer.discount, createdAt: new Date().toISOString(), source: "newsletter-welcome" });
+    else if (Number(snapshot.data()?.discount) !== newsletterWelcomeOffer.discount) throw new HttpsError("failed-precondition", "O código promocional da newsletter tem uma configuração diferente. Verifique-o no painel de cupões.");
   });
 }
 
@@ -98,7 +100,7 @@ exports.createLocalNewsletterAdminSession = onCall(callableOptions, async reques
 
 const currency = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
 const shippingZones = {
-  continental: { label: "Portugal Continental", fee: 4.9, freeFrom: 85 },
+  continental: { label: "Portugal Continental", fee: 4.9, freeFrom: 60 },
   islands: { label: "Madeira / Açores", fee: 12, freeFrom: 100 },
   spain: { label: "Espanha", fee: 10, freeFrom: 100 },
 };
@@ -284,6 +286,10 @@ function liveDiscount(product) {
 }
 
 function couponPercentage(coupon) {
+  if (!newsletterWelcomeOffer.enabled && (coupon?.code === newsletterWelcomeOffer.code || coupon?.source === "newsletter-welcome")) {
+    throw new HttpsError("failed-precondition", "Este código promocional não está ativo.");
+  }
+  if (coupon?.active === false) throw new HttpsError("failed-precondition", "Este código promocional não está ativo.");
   const discount = Number(coupon?.discount);
   if (!Number.isInteger(discount) || discount < 1 || discount > 95) {
     throw new HttpsError("failed-precondition", "Este código promocional não está ativo.");
@@ -292,7 +298,7 @@ function couponPercentage(coupon) {
 }
 
 async function createOrderRecord(request, paymentMode) {
-  const { DEFAULT_SHIPPING_SETTINGS, STORE_PICKUP_CARRIER_ID, normalizeShippingSettings, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
+  const { DEFAULT_SHIPPING_SETTINGS, STORE_PICKUP_CARRIER_ID, normalizeShippingSettings, applyBlackFridayShipping, getShippingCarrier, getShippingCost } = await import("./shipping.mjs");
   const { loyaltyDiscountForSubtotal, loyaltyPointsForAmount, loyaltyRewardById, normalizeLoyaltyPoints } = await import("./loyalty.mjs");
   const { GIFT_CARD_PRODUCT_ID, giftCardAmountForTotal, giftCardValueForVolume, normalizeGiftCardBalance } = await import("./gift-cards.mjs");
   const input = request.data || {};
@@ -358,7 +364,7 @@ async function createOrderRecord(request, paymentMode) {
       catch { throw new HttpsError("failed-precondition", "O stock geral dos decants está inválido. Contacte a loja."); }
     }
     const shippingSnapshot = await transaction.get(db.collection("settings").doc("shipping"));
-    const shippingSettings = shippingSnapshot.exists ? normalizeShippingSettings(shippingSnapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS;
+    const shippingSettings = applyBlackFridayShipping(shippingSnapshot.exists ? normalizeShippingSettings(shippingSnapshot.data().zones) : DEFAULT_SHIPPING_SETTINGS);
     if (!shippingSettings) {
       throw new HttpsError("failed-precondition", "Os portes estão indisponíveis. Contacte a loja.");
     }
@@ -1653,16 +1659,16 @@ exports.confirmNewsletterSubscription = onCall(callableOptions, async request =>
   if (snapshot.empty) throw new HttpsError("not-found", "Esta ligação de confirmação já não é válida.");
   const reference = snapshot.docs[0].ref;
   const subscription = snapshot.docs[0].data();
-  if (subscription.status === "active" && subscription.welcomeEmailQueuedAt) return { status: "active", couponCode: newsletterCouponCode };
+  if (subscription.status === "active" && subscription.welcomeEmailQueuedAt) return { status: "active" };
   if (Number(subscription.confirmationExpiresAt) < Date.now()) throw new HttpsError("deadline-exceeded", "A ligação expirou. Inscreva-se novamente para receber uma nova.");
   await ensureNewsletterCoupon();
   const unsubscribeToken = randomBytes(32).toString("base64url");
   const unsubscribeHash = newsletterTokenHash(unsubscribeToken);
   const unsubscribeUrl = `${newsletterBaseUrl()}/?newsletterUnsubscribe=${encodeURIComponent(unsubscribeToken)}`;
-  const welcome = newsletterEmailHtml("Bem-vinda à newsletter Mystic Essence", ["A sua inscrição está confirmada.", `Use o código ${newsletterCouponCode} para receber 10% de desconto na sua próxima compra.`], `<p style="margin:24px 0;padding:18px;border:1px solid #d6ab4b;text-align:center;color:#f2d37d;font-size:22px;font-weight:700;letter-spacing:2px">${newsletterCouponCode}</p><p style="margin-top:28px;font-size:12px;color:#aaa"><a href="${html(unsubscribeUrl)}" style="color:#d6ab4b">Cancelar subscrição</a></p>`);
-  await queueEmail(subscription.email, "A sua oferta de boas-vindas · Mystic Essence", welcome, `newsletter-welcome-${reference.id}`);
+  const welcome = newsletterEmailHtml("Bem-vinda à newsletter Mystic Essence", ["A sua inscrição está confirmada.", "Obrigado por acompanhar a Mystic Essence. Enviaremos novidades e campanhas da loja por email."], `<p style="margin-top:28px;font-size:12px;color:#aaa"><a href="${html(unsubscribeUrl)}" style="color:#d6ab4b">Cancelar subscrição</a></p>`);
+  await queueEmail(subscription.email, "Inscrição confirmada · Mystic Essence", welcome, `newsletter-welcome-${reference.id}`);
   await reference.update({ status: "active", confirmedAt: subscription.confirmedAt || new Date().toISOString(), confirmationTokenHash: FieldValue.delete(), confirmationExpiresAt: FieldValue.delete(), unsubscribeTokenHashes: [unsubscribeHash], welcomeEmailQueuedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-  return { status: "active", couponCode: newsletterCouponCode, welcomeEmailQueued: true };
+  return { status: "active", welcomeEmailQueued: true };
 });
 
 exports.unsubscribeNewsletter = onCall(callableOptions, async request => {
