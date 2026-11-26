@@ -1,6 +1,6 @@
 export const SHIPPING_ZONE_IDS = Object.freeze(['continental', 'islands', 'spain']);
 export const MAX_CARRIERS = 10;
-export const BLACK_FRIDAY_SHIPPING = Object.freeze({ enabled: true, mainlandFreeFrom: 60 });
+export const BLACK_FRIDAY_SHIPPING = Object.freeze({ enabled: true, mainlandFreeFrom: 50 });
 export const STORE_PICKUP_CARRIER_ID = 'store-pickup';
 export const STORE_PICKUP_CARRIER = Object.freeze({
   id: STORE_PICKUP_CARRIER_ID,
@@ -9,7 +9,7 @@ export const STORE_PICKUP_CARRIER = Object.freeze({
   description: 'R. São Nicolau 8, Lj 20, 4520-248 Santa Maria da Feira',
 });
 export const DEFAULT_SHIPPING_SETTINGS = Object.freeze(Object.fromEntries(
-  [['continental', 4.9, 60], ['islands', 12, 100], ['spain', 10, 100]].map(([zone, price, freeFrom]) => [zone, {
+  [['continental', 4.9, 50], ['islands', 12, 100], ['spain', 10, 100]].map(([zone, price, freeFrom]) => [zone, {
     freeFrom, carriers: [{ id: 'standard', name: 'Envio standard', price, description: '' }],
   }]),
 ));

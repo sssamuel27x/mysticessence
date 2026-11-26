@@ -101,7 +101,7 @@ exports.createLocalNewsletterAdminSession = onCall(callableOptions, async reques
 
 const currency = new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" });
 const shippingZones = {
-  continental: { label: "Portugal Continental", fee: 4.9, freeFrom: 60 },
+  continental: { label: "Portugal Continental", fee: 4.9, freeFrom: 50 },
   islands: { label: "Madeira / Açores", fee: 12, freeFrom: 100 },
   spain: { label: "Espanha", fee: 10, freeFrom: 100 },
 };

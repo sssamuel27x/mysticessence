@@ -561,7 +561,7 @@ const COPY = {
         spain: "Espanha",
       },
       shippingZoneNotes: {
-        continental: "4,90 € ou grátis acima de 60 €",
+        continental: "4,90 € ou grátis acima de 50 €",
         islands: "12 € ou grátis acima de 100 €",
         spain: "10 € ou grátis acima de 100 €",
       },

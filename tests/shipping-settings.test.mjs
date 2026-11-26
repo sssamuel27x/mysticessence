@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_SHIPPING_SETTINGS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, isValidShippingSettings, normalizeShippingSettings, getShippingCost, getShippingCarrier, shippingSettingsEqual } from '../functions/shipping.mjs';
+import { DEFAULT_SHIPPING_SETTINGS, STORE_PICKUP_CARRIER, STORE_PICKUP_CARRIER_ID, applyBlackFridayShipping, isValidShippingSettings, normalizeShippingSettings, getShippingCost, getShippingCarrier, shippingSettingsEqual } from '../functions/shipping.mjs';
 
 const settings = () => structuredClone(DEFAULT_SHIPPING_SETTINGS);
 
 test('existing zone rates and exact free shipping boundaries are preserved', () => {
-  for (const [zone, fee, threshold] of [['continental', 4.9, 85], ['islands', 12, 100], ['spain', 10, 100]]) {
+  for (const [zone, fee, threshold] of [['continental', 4.9, 50], ['islands', 12, 100], ['spain', 10, 100]]) {
     assert.equal(getShippingCost(threshold - .01, zone), fee);
     assert.equal(getShippingCost(threshold, zone), 0);
     assert.equal(getShippingCost(threshold + 1, zone), 0);
@@ -52,7 +52,7 @@ test('rejects malformed settings, duplicate carriers and invalid money', () => {
 
 test('legacy settings migrate to a standard carrier and equality includes descriptions', () => {
   const old = { continental: { fee: 4.9, freeFrom: 85 }, islands: { fee: 12, freeFrom: 100 }, spain: { fee: 10, freeFrom: 100 } };
-  assert.ok(shippingSettingsEqual(normalizeShippingSettings(old), settings()));
+  assert.ok(shippingSettingsEqual(applyBlackFridayShipping(normalizeShippingSettings(old)), settings()));
   assert.equal(normalizeShippingSettings({ continental: { fee: -1 } }), null);
   const next = settings();
   next.spain.carriers[0].description = '6-8 dias';
